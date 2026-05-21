@@ -199,15 +199,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-/** Validate a 200 body against the `GenerationResponse` contract. */
+/**
+ * Validate a 200 body against the generation response contract and normalize
+ * `output` to an array.
+ *
+ * NOTE: the OpenAPI spec declares `output` as an array of strings, but the live
+ * API returns a single string for at least some endpoints (confirmed on
+ * /upscale-4k), so we accept both shapes and always expose an array.
+ */
 function asGenerationResult(value: unknown): GenerationResult | undefined {
   if (!isRecord(value)) return undefined;
   const { output, balance, cost } = value;
-  if (!Array.isArray(output) || !output.every((item) => typeof item === 'string')) {
-    return undefined;
+
+  let urls: string[] | undefined;
+  if (typeof output === 'string') {
+    urls = [output];
+  } else if (Array.isArray(output) && output.every((item) => typeof item === 'string')) {
+    urls = output as string[];
   }
+  if (urls === undefined) return undefined;
   if (typeof balance !== 'number' || typeof cost !== 'number') return undefined;
-  return { output: output as string[], balance, cost };
+
+  return { output: urls, balance, cost };
 }
 
 /** Parse a 400 body against the `ErrorResponse` contract. */

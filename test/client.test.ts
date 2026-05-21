@@ -48,6 +48,15 @@ describe('MyArchitectAIClient.generate', () => {
     assert.deepEqual(result, { output: ['https://img/1.png'], balance: 9.5, cost: 0.5 });
   });
 
+  it('normalizes a string `output` to an array (live API shape, e.g. upscale-4k)', async () => {
+    const { fetch } = stubFetch(() =>
+      jsonResponse(200, { output: 'https://img/only.jpg', balance: 9.97, cost: 0.03 }),
+    );
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    const result = await client.generate('/upscale-4k', { image: 'https://x/y.png' });
+    assert.deepEqual(result, { output: ['https://img/only.jpg'], balance: 9.97, cost: 0.03 });
+  });
+
   it('sends the API key, JSON body, and correct URL', async () => {
     let captured: { url: string | URL; init: RequestInit | undefined } | undefined;
     const fetch: FetchLike = async (url, init) => {
