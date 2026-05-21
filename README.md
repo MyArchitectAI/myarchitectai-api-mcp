@@ -26,6 +26,16 @@ both as a human-readable summary and as machine-readable `structuredContent`.
 - `outputWidth` / `outputHeight` range from `128` to `2048` pixels.
 - Generation is synchronous and typically completes in under ~10 seconds.
 
+### Quality-of-life tools (no credits consumed)
+
+| Tool | What it does |
+| --- | --- |
+| `preview_image` | Fetch an image URL and return it **inline** so the agent (and GUI clients) can see it; optionally opens it in a browser when a display is available. |
+| `save_image` | Download an image URL to disk (`MYARCHITECTAI_DOWNLOAD_DIR`, default `./renders`) — output URLs are public but may expire. |
+| `validate_image_url` | HEAD-check that an input URL is a reachable image *before* spending a credit on a doomed render. |
+| `usage_summary` | This session's totals: generations, credits spent, last-known balance (no paid call), and a per-tool breakdown. |
+| `list_recent_generations` | Recent generations (tool, URLs, cost, balance) so you can re-preview or save an earlier result without regenerating. |
+
 ## Requirements
 
 - Node.js **18+** (uses the built-in `fetch`).
@@ -66,6 +76,9 @@ Configuration is read from environment variables:
 | `MYARCHITECTAI_BASE_URL` | no | `https://api.myarchitectai.com/v1` | Override the API base URL. |
 | `MYARCHITECTAI_TIMEOUT_MS` | no | `120000` | Per-request timeout in ms (1000–600000). |
 | `MYARCHITECTAI_MAX_RETRIES` | no | `2` | Retries for transient failures, 0 disables (0–10). |
+| `MYARCHITECTAI_DOWNLOAD_DIR` | no | `renders` | Directory `save_image` writes to. |
+| `MYARCHITECTAI_MAX_PREVIEW_BYTES` | no | `5000000` | Max bytes `preview_image` embeds inline before falling back to a URL. |
+| `MYARCHITECTAI_STATE_FILE` | no | — | Optional path to persist generation history across restarts. |
 
 See [`.env.example`](./.env.example).
 

@@ -12,10 +12,14 @@ export const DEFAULT_BASE_URL = 'https://api.myarchitectai.com/v1';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_RETRIES = 2;
+const DEFAULT_DOWNLOAD_DIR = 'renders';
+const DEFAULT_MAX_PREVIEW_BYTES = 5_000_000;
 
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 600_000;
 const MAX_RETRIES = 10;
+const MIN_PREVIEW_BYTES = 1_024;
+const MAX_PREVIEW_BYTES = 50_000_000;
 
 export interface Config {
   /** API key sent as the `x-api-key` header. */
@@ -26,6 +30,12 @@ export interface Config {
   timeoutMs: number;
   /** Maximum number of retries for transient failures (0 disables retries). */
   maxRetries: number;
+  /** Directory for `save_image` downloads (relative paths resolve from cwd). */
+  downloadDir: string;
+  /** Max bytes to embed inline in `preview_image` before falling back to a URL. */
+  maxPreviewBytes: number;
+  /** Optional path to persist session generation history across restarts. */
+  stateFile: string | undefined;
 }
 
 /**
@@ -57,6 +67,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       min: 0,
       max: MAX_RETRIES,
     }),
+    downloadDir: env.MYARCHITECTAI_DOWNLOAD_DIR?.trim() || DEFAULT_DOWNLOAD_DIR,
+    maxPreviewBytes: parseBoundedInt(env.MYARCHITECTAI_MAX_PREVIEW_BYTES, {
+      name: 'MYARCHITECTAI_MAX_PREVIEW_BYTES',
+      fallback: DEFAULT_MAX_PREVIEW_BYTES,
+      min: MIN_PREVIEW_BYTES,
+      max: MAX_PREVIEW_BYTES,
+    }),
+    stateFile: env.MYARCHITECTAI_STATE_FILE?.trim() || undefined,
   };
 }
 

@@ -1,24 +1,45 @@
 /**
- * Registers the MyArchitectAI tools on an {@link McpServer}.
+ * Registers all tools on an {@link McpServer}:
+ *  - five generation tools mapped 1:1 to the MyArchitectAI API (each records
+ *    its result to the session store), and
+ *  - five QoL tools (preview, save, validate, usage, recent) that consume no
+ *    credits.
  *
- * Every endpoint shares the same response contract, so each handler simply
- * forwards its validated arguments (which map 1:1 to the API's JSON body) to
- * {@link MyArchitectAIClient.generate} and formats the result. `JSON.stringify`
- * drops absent optional fields, so the validated args can be sent as-is.
+ * Generation handlers forward their validated arguments (which map 1:1 to the
+ * API's JSON body) to {@link MyArchitectAIClient.generate}; `JSON.stringify`
+ * drops absent optional fields, so the validated args are sent as-is.
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { Config } from './config.js';
 import type { GenerationResult, MyArchitectAIClient } from './client.js';
+import { MediaService, openInBrowser } from './media.js';
+import type { SessionStore } from './session.js';
 import { MyArchitectAIError } from './errors.js';
 import {
   generationOutputShape,
+  listRecentOutputShape,
+  listRecentShape,
+  previewImageShape,
   renderExteriorShape,
   renderInteriorShape,
+  saveImageOutputShape,
+  saveImageShape,
   styleTransferShape,
   textToImageShape,
   upscale4kShape,
+  usageOutputShape,
+  validateImageUrlShape,
+  validateUrlOutputShape,
 } from './schemas.js';
+
+export interface ToolDeps {
+  client: MyArchitectAIClient;
+  session: SessionStore;
+  media: MediaService;
+  config: Config;
+}
 
 const ENDPOINT = {
   renderExterior: '/render/exterior',
@@ -28,18 +49,34 @@ const ENDPOINT = {
   upscale4k: '/upscale-4k',
 } as const;
 
-/** All generation tools touch an external system, charge credits, and are not idempotent. */
-const ANNOTATIONS = {
+/** Generation tools touch an external system, charge credits, and aren't idempotent. */
+const GENERATION_ANNOTATIONS = {
   readOnlyHint: false,
   destructiveHint: false,
   idempotentHint: false,
   openWorldHint: true,
 } as const;
 
-/**
- * Register all tools and return their names.
- */
-export function registerTools(server: McpServer, client: MyArchitectAIClient): string[] {
+const TOOL_NAMES = [
+  'render_exterior',
+  'render_interior',
+  'style_transfer',
+  'text_to_image',
+  'upscale_4k',
+  'preview_image',
+  'save_image',
+  'validate_image_url',
+  'usage_summary',
+  'list_recent_generations',
+] as const;
+
+export function registerTools(server: McpServer, deps: ToolDeps): string[] {
+  registerGenerationTools(server, deps);
+  registerQolTools(server, deps);
+  return [...TOOL_NAMES];
+}
+
+function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
   server.registerTool(
     'render_exterior',
     {
@@ -51,9 +88,9 @@ export function registerTools(server: McpServer, client: MyArchitectAIClient): s
         'cost and remaining balance.',
       inputSchema: renderExteriorShape,
       outputSchema: generationOutputShape,
-      annotations: ANNOTATIONS,
+      annotations: GENERATION_ANNOTATIONS,
     },
-    async (args) => execute(client, ENDPOINT.renderExterior, 'Exterior render', args),
+    async (args) => generate(deps, ENDPOINT.renderExterior, 'render_exterior', 'Exterior render', args),
   );
 
   server.registerTool(
@@ -67,9 +104,9 @@ export function registerTools(server: McpServer, client: MyArchitectAIClient): s
         'cost and remaining balance.',
       inputSchema: renderInteriorShape,
       outputSchema: generationOutputShape,
-      annotations: ANNOTATIONS,
+      annotations: GENERATION_ANNOTATIONS,
     },
-    async (args) => execute(client, ENDPOINT.renderInterior, 'Interior render', args),
+    async (args) => generate(deps, ENDPOINT.renderInterior, 'render_interior', 'Interior render', args),
   );
 
   server.registerTool(
@@ -83,9 +120,9 @@ export function registerTools(server: McpServer, client: MyArchitectAIClient): s
         'plus the credit cost and remaining balance.',
       inputSchema: styleTransferShape,
       outputSchema: generationOutputShape,
-      annotations: ANNOTATIONS,
+      annotations: GENERATION_ANNOTATIONS,
     },
-    async (args) => execute(client, ENDPOINT.styleTransfer, 'Style transfer', args),
+    async (args) => generate(deps, ENDPOINT.styleTransfer, 'style_transfer', 'Style transfer', args),
   );
 
   server.registerTool(
@@ -99,9 +136,9 @@ export function registerTools(server: McpServer, client: MyArchitectAIClient): s
         'cost and remaining balance.',
       inputSchema: textToImageShape,
       outputSchema: generationOutputShape,
-      annotations: ANNOTATIONS,
+      annotations: GENERATION_ANNOTATIONS,
     },
-    async (args) => execute(client, ENDPOINT.textToImage, 'Text-to-image', args),
+    async (args) => generate(deps, ENDPOINT.textToImage, 'text_to_image', 'Text-to-image', args),
   );
 
   server.registerTool(
@@ -114,22 +151,184 @@ export function registerTools(server: McpServer, client: MyArchitectAIClient): s
         'Returns the upscaled image URL(s) plus the credit cost and remaining balance.',
       inputSchema: upscale4kShape,
       outputSchema: generationOutputShape,
-      annotations: ANNOTATIONS,
+      annotations: GENERATION_ANNOTATIONS,
     },
-    async (args) => execute(client, ENDPOINT.upscale4k, 'Upscale to 4K', args),
+    async (args) => generate(deps, ENDPOINT.upscale4k, 'upscale_4k', 'Upscale to 4K', args),
   );
-
-  return ['render_exterior', 'render_interior', 'style_transfer', 'text_to_image', 'upscale_4k'];
 }
 
-async function execute(
-  client: MyArchitectAIClient,
+function registerQolTools(server: McpServer, deps: ToolDeps): void {
+  server.registerTool(
+    'preview_image',
+    {
+      title: 'Preview Image',
+      description:
+        'Fetch an image by URL and return it inline so you (the agent) and GUI clients can actually see it — ' +
+        'useful for inspecting a generation result before continuing. Optionally also opens it in the default ' +
+        'browser when a display is available. Consumes no MyArchitectAI credits.',
+      inputSchema: previewImageShape,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ url, open }) => {
+      try {
+        const fetched = await deps.media.fetchForPreview(url);
+        const opened = open === true ? openInBrowser(url) : false;
+        const note = openNote(open === true, opened);
+        if (fetched.tooLarge) {
+          return text(
+            `Image is ${formatBytes(fetched.bytes)} — too large to embed inline ` +
+              `(limit ${formatBytes(deps.config.maxPreviewBytes)}). Open it directly:\n${url}${note}`,
+          );
+        }
+        return {
+          content: [
+            { type: 'text', text: `Preview of ${url} (${formatBytes(fetched.bytes)}, ${fetched.mimeType})${note}` },
+            { type: 'image', data: fetched.base64, mimeType: fetched.mimeType },
+          ],
+        };
+      } catch (err) {
+        return formatError('Preview', err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'save_image',
+    {
+      title: 'Save Image',
+      description:
+        'Download an image URL to local disk (defaults to the configured download directory) and return the ' +
+        'saved file path. Generation output URLs are public but may expire, so saving keeps a permanent copy. ' +
+        'Consumes no MyArchitectAI credits.',
+      inputSchema: saveImageShape,
+      outputSchema: saveImageOutputShape,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    async ({ url, filename, dir }) => {
+      try {
+        const saved = await deps.media.save(url, {
+          dir: dir ?? deps.config.downloadDir,
+          ...(filename !== undefined ? { filename } : {}),
+        });
+        return {
+          content: [{ type: 'text', text: `Saved ${formatBytes(saved.bytes)} (${saved.mimeType}) to ${saved.path}` }],
+          structuredContent: { path: saved.path, bytes: saved.bytes, mimeType: saved.mimeType },
+        };
+      } catch (err) {
+        return formatError('Save', err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'validate_image_url',
+    {
+      title: 'Validate Image URL',
+      description:
+        'HEAD-check that a URL is reachable and returns an image, before using it as a render input (which would ' +
+        'otherwise spend a credit on a request guaranteed to fail). Consumes no MyArchitectAI credits.',
+      inputSchema: validateImageUrlShape,
+      outputSchema: validateUrlOutputShape,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ url }) => {
+      try {
+        const check = await deps.media.check(url);
+        const verdict = check.ok && check.isImage
+          ? 'OK — reachable image.'
+          : check.ok
+            ? `Reachable, but not an image (content-type: ${check.contentType ?? 'unknown'}).`
+            : `Not reachable (status ${check.status}${check.reason ? `: ${check.reason}` : ''}).`;
+        return {
+          content: [{ type: 'text', text: `${url}\n${verdict}` }],
+          structuredContent: {
+            ok: check.ok,
+            status: check.status,
+            contentType: check.contentType,
+            isImage: check.isImage,
+            bytes: check.contentLength,
+          },
+        };
+      } catch (err) {
+        return formatError('Validate', err);
+      }
+    },
+  );
+
+  server.registerTool(
+    'usage_summary',
+    {
+      title: 'Usage Summary',
+      description:
+        "Report this session's MyArchitectAI usage: number of generations, total credits spent, the last known " +
+        'balance (from the most recent generation — no paid call), and a per-tool breakdown. Consumes no credits.',
+      outputSchema: usageOutputShape,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      const summary = deps.session.summary();
+      const lines = [
+        `Generations this session: ${summary.totalGenerations}`,
+        `Total cost: ${formatNumber(summary.totalCost)} credits`,
+        `Last known balance: ${summary.lastKnownBalance === null ? 'unknown (no generations yet)' : `${formatNumber(summary.lastKnownBalance)} credits`}`,
+      ];
+      for (const [tool, value] of Object.entries(summary.byTool)) {
+        lines.push(`  - ${tool}: ${value.count}× (${formatNumber(value.cost)} credits)`);
+      }
+      return {
+        content: [{ type: 'text', text: lines.join('\n') }],
+        structuredContent: {
+          totalGenerations: summary.totalGenerations,
+          totalCost: summary.totalCost,
+          lastKnownBalance: summary.lastKnownBalance,
+          byTool: summary.byTool,
+          since: summary.since,
+        },
+      };
+    },
+  );
+
+  server.registerTool(
+    'list_recent_generations',
+    {
+      title: 'List Recent Generations',
+      description:
+        'List recent generations from this session (tool, time, output URLs, cost, balance) so you can re-preview ' +
+        'or save an earlier result without regenerating it — and without spending credits.',
+      inputSchema: listRecentShape,
+      outputSchema: listRecentOutputShape,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ limit }) => {
+      const generations = deps.session.recent(limit ?? 10);
+      const lines = generations.length
+        ? generations.map(
+            (record) =>
+              `#${record.id} ${record.tool} @ ${record.createdAt} — ${record.output.length} image(s), ` +
+              `cost ${formatNumber(record.cost)} — ${record.output.join(', ')}`,
+          )
+        : ['No generations recorded yet this session.'];
+      return { content: [{ type: 'text', text: lines.join('\n') }], structuredContent: { generations } };
+    },
+  );
+}
+
+async function generate(
+  deps: ToolDeps,
   path: string,
+  toolName: string,
   label: string,
   body: Record<string, unknown>,
 ): Promise<CallToolResult> {
   try {
-    return formatSuccess(label, await client.generate(path, body));
+    const result = await deps.client.generate(path, body);
+    await deps.session.record({
+      tool: toolName,
+      output: result.output,
+      cost: result.cost,
+      balance: result.balance,
+    });
+    return formatSuccess(label, result);
   } catch (err) {
     return formatError(label, err);
   }
@@ -158,17 +357,31 @@ function formatError(label: string, err: unknown): CallToolResult {
     if (typeof err.balance === 'number') meta.push(`balance ${formatNumber(err.balance)}`);
     if (typeof err.cost === 'number') meta.push(`cost ${formatNumber(err.cost)}`);
 
-    const text =
-      `${label} failed: ${err.message}` + (meta.length > 0 ? `\n\n(${meta.join(' · ')})` : '');
-    return { content: [{ type: 'text', text }], isError: true };
+    const detail = meta.length > 0 ? `\n\n(${meta.join(' · ')})` : '';
+    return { content: [{ type: 'text', text: `${label} failed: ${err.message}${detail}` }], isError: true };
   }
 
   const message = err instanceof Error ? err.message : String(err);
   return { content: [{ type: 'text', text: `${label} failed: ${message}` }], isError: true };
 }
 
+function text(message: string): CallToolResult {
+  return { content: [{ type: 'text', text: message }] };
+}
+
+function openNote(requested: boolean, opened: boolean): string {
+  if (!requested) return '';
+  return opened ? ' — opened in browser.' : ' — no display detected, not opened.';
+}
+
 /** Render a credit amount without floating-point noise or trailing zeros. */
 function formatNumber(value: number): string {
   if (Number.isInteger(value)) return value.toString();
   return (Math.round(value * 1e4) / 1e4).toString();
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }

@@ -12,6 +12,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { MyArchitectAIClient } from './client.js';
 import { loadConfig, SERVER_NAME, SERVER_VERSION } from './config.js';
 import { ConfigError } from './errors.js';
+import { MediaService } from './media.js';
+import { SessionStore } from './session.js';
 import { registerTools } from './tools.js';
 
 function log(message: string): void {
@@ -21,9 +23,12 @@ function log(message: string): void {
 async function main(): Promise<void> {
   const config = loadConfig();
   const client = new MyArchitectAIClient(config);
+  const media = new MediaService({ timeoutMs: config.timeoutMs, maxBytes: config.maxPreviewBytes });
+  const session = new SessionStore(config.stateFile);
+  await session.init();
 
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-  const tools = registerTools(server, client);
+  const tools = registerTools(server, { client, session, media, config });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

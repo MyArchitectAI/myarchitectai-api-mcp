@@ -16,6 +16,9 @@ const baseConfig: Config = {
   baseUrl: 'https://api.test/v1',
   timeoutMs: 1000,
   maxRetries: 2,
+  downloadDir: 'renders',
+  maxPreviewBytes: 5_000_000,
+  stateFile: undefined,
 };
 
 function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
