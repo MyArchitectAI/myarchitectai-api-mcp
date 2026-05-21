@@ -1,0 +1,33 @@
+name: Release
+
+# Publishes to npm when a version tag (e.g. v0.1.0) is pushed.
+#
+# Prerequisites (see README "Publishing"):
+#   - Set a real package name + `repository` field in package.json.
+#   - Add an `NPM_TOKEN` repository secret (an npm automation/granular token),
+#     OR configure npm Trusted Publishing (OIDC) and drop the token entirely.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # required for npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

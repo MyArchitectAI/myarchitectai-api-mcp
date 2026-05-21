@@ -1,0 +1,56 @@
+{
+  "name": "myarchitectai-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (MCP) server for the MyArchitectAI rendering API — exterior/interior render, style transfer, text-to-image, and 4K upscaling.",
+  "type": "module",
+  "license": "MIT",
+  "author": "",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "myarchitectai",
+    "architecture",
+    "ai-rendering",
+    "claude"
+  ],
+  "homepage": "https://www.myarchitectai.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/myarchitectai-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/myarchitectai-mcp/issues"
+  },
+  "main": "dist/index.js",
+  "bin": {
+    "myarchitectai-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "tsx": "^4.22.3",
+    "typescript": "^5.9.3"
+  }
+}
