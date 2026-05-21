@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "myarchitectai": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"],
+      "env": {
+        "MYARCHITECTAI_API_KEY": "${user_config.api_key}"
+      }
+    }
+  }
+}

@@ -134,6 +134,32 @@ claude mcp add myarchitectai \
 The server communicates over **stdio**. Launch `node dist/index.js` with `MYARCHITECTAI_API_KEY`
 set in the environment and speak MCP over stdin/stdout. Diagnostics are written to stderr only.
 
+### As a Claude Code plugin
+
+This repo is also a Claude Code **plugin** that bundles the MCP server plus a `compare-renders`
+skill and a `/render` workflow command. The plugin declares its own MCP config
+([`plugin-mcp.json`](./plugin-mcp.json)) via [`.claude-plugin/plugin.json`](./.claude-plugin/plugin.json),
+so it does not collide with the local-dev [`.mcp.json`](./.mcp.json). The API key is collected via
+`userConfig` (`sensitive: true`) — Claude Code prompts once and stores it in the OS keychain.
+
+```bash
+# Install from the marketplace (this repo)
+/plugin marketplace add your-org/myarchitectai-mcp
+/plugin install myarchitectai@myarchitectai
+
+# Try it locally without installing (run from OUTSIDE this repo so the dev
+# .mcp.json doesn't shadow the plugin's server of the same name):
+cd /tmp && claude --plugin-dir /absolute/path/to/myarchitectai-mcp
+```
+
+Then `/mcp` shows the `myarchitectai` server, and the namespaced skill/command are available as
+`/myarchitectai:compare-renders` and `/myarchitectai:render`.
+
+**Distribution note:** the plugin runs `node ${CLAUDE_PLUGIN_ROOT}/dist/index.js`. `dist/` is
+gitignored, so a fresh marketplace clone won't have it. Before publishing the plugin, either
+(a) publish the package to npm and switch `plugin-mcp.json` to `npx -y <package-name>`
+(recommended once the name is set), or (b) commit `dist/`.
+
 ## Output and error behavior
 
 - **Success** → a text summary listing the generated image URL(s), cost, and balance, plus
