@@ -1,10 +1,10 @@
 {
-  "name": "myarchitectai-mcp",
+  "name": "@myarchitectai/mcp",
   "version": "0.1.0",
   "description": "Model Context Protocol (MCP) server for the MyArchitectAI rendering API — exterior/interior render, style transfer, text-to-image, and 4K upscaling.",
   "type": "module",
   "license": "MIT",
-  "author": "",
+  "author": "MyArchitectAI",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -16,10 +16,10 @@
   "homepage": "https://www.myarchitectai.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/myarchitectai-mcp.git"
+    "url": "git+https://github.com/MyArchitectAI/myarchitectai-api-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/myarchitectai-mcp/issues"
+    "url": "https://github.com/MyArchitectAI/myarchitectai-api-mcp/issues"
   },
   "main": "dist/index.js",
   "bin": {

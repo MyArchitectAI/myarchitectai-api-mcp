@@ -1,18 +1,26 @@
 name: Release
 
-# Publishes to npm when a version tag (e.g. v0.1.0) is pushed.
+# Publishes @myarchitectai/mcp to npm when a version tag (e.g. v0.1.0) is pushed,
+# using npm Trusted Publishing (OIDC) — no NPM_TOKEN secret required.
 #
-# Prerequisites (see README "Publishing"):
-#   - Set a real package name + `repository` field in package.json.
-#   - Add an `NPM_TOKEN` repository secret (an npm automation/granular token),
-#     OR configure npm Trusted Publishing (OIDC) and drop the token entirely.
+# One-time setup (see README "Publishing"):
+#   1. Publish the package once manually so it exists — npm requires a package to
+#      exist before a trusted publisher can be attached:
+#        npm login && npm publish --access public
+#   2. On npmjs.com -> @myarchitectai/mcp -> Settings -> Trusted Publisher ->
+#      GitHub Actions:
+#        Organization/user:  MyArchitectAI
+#        Repository:         myarchitectai-api-mcp
+#        Workflow filename:  release.yml
+#        Environment:        (leave blank)
+#   3. Push a version tag (vX.Y.Z); this workflow publishes via OIDC + provenance.
 on:
   push:
     tags: ['v*']
 
 permissions:
   contents: read
-  id-token: write # required for npm provenance
+  id-token: write # required for npm OIDC trusted publishing + provenance
 
 jobs:
   publish:
@@ -24,10 +32,11 @@ jobs:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
           cache: npm
+      # Trusted publishing needs npm >= 11.5.1, newer than Node 22's bundled npm.
+      - run: npm install -g npm@latest
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
+      # No NODE_AUTH_TOKEN: npm auto-detects the GitHub OIDC environment.
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
