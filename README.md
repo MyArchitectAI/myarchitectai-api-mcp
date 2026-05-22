@@ -1,104 +1,56 @@
-# MyArchitectAI MCP Server
+# MyArchitectAI MCP server
 
-A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes the
-[MyArchitectAI](https://www.myarchitectai.com) rendering API to MCP-compatible clients such as
-Claude Desktop, Claude Code, and Cursor. Generate photorealistic architectural renders, transfer
-styles, create images from text, and upscale to 4K — all as tools your assistant can call.
+[![npm](https://img.shields.io/npm/v/@myarchitectai/mcp)](https://www.npmjs.com/package/@myarchitectai/mcp)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
-> Published on npm as [`@myarchitectai/mcp`](https://www.npmjs.com/package/@myarchitectai/mcp).
+A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for the
+[MyArchitectAI](https://www.myarchitectai.com) rendering API. It gives MCP-compatible assistants
+(Claude Code, Claude Desktop, Cursor, …) tools to generate photorealistic architectural renders,
+transfer styles, create images from text, and upscale to 4K — plus quality-of-life tools to preview,
+save, and track results.
 
 ## Features
 
-| Tool | What it does | Required inputs | Optional inputs |
+**Generation tools** (consume credits):
+
+| Tool | What it does | Required | Optional |
 | --- | --- | --- | --- |
-| `render_exterior` | Photorealistic **exterior** render from a sketch/drawing/3D/photo | `image`, `outputFormat` | `prompt` |
-| `render_interior` | Photorealistic **interior** render from a sketch/drawing/3D/photo | `image`, `outputFormat` | `prompt` |
-| `style_transfer` | Apply the look of a reference image onto a source image | `image`, `referenceImage`, `outputFormat` | `prompt`, `negativePrompt`, `styleTransferStrength` (0–1) |
-| `text_to_image` | Generate an architectural image from text only | `prompt`, `outputFormat`, `outputWidth`, `outputHeight` | `negativePrompt` |
+| `render_exterior` | Photorealistic **exterior** render from a sketch, drawing, 3D screenshot, or photo | `image`, `outputFormat` | `prompt` |
+| `render_interior` | Photorealistic **interior** render | `image`, `outputFormat` | `prompt` |
+| `style_transfer` | Apply a reference image's style to a source image | `image`, `referenceImage`, `outputFormat` | `prompt`, `negativePrompt`, `styleTransferStrength` |
+| `text_to_image` | Generate an architectural image from text | `prompt`, `outputFormat`, `outputWidth`, `outputHeight` | `negativePrompt` |
 | `upscale_4k` | Upscale an image up to 4K/8K | `image` | `outputFormat` |
 
-Every tool returns the generated image URL(s) plus the credit `cost` and remaining `balance`,
-both as a human-readable summary and as machine-readable `structuredContent`.
-
-- `image` / `referenceImage` must be **publicly reachable URLs** (the API fetches them).
-- `outputFormat` is one of `webp`, `jpg`, `png`, `avif` (text-to-image supports `png`/`jpg`/`webp` only).
-- `outputWidth` / `outputHeight` range from `128` to `2048` pixels.
-- Generation is synchronous and typically completes in under ~10 seconds.
-
-### Quality-of-life tools (no credits consumed)
+**Quality-of-life tools** (no credits consumed):
 
 | Tool | What it does |
 | --- | --- |
-| `preview_image` | Fetch an image URL and return it **inline** so the agent (and GUI clients) can see it; optionally opens it in a browser when a display is available. |
-| `save_image` | Download an image URL to disk (`MYARCHITECTAI_DOWNLOAD_DIR`, default `./renders`) — output URLs are public but may expire. |
-| `validate_image_url` | HEAD-check that an input URL is a reachable image *before* spending a credit on a doomed render. |
-| `usage_summary` | This session's totals: generations, credits spent, last-known balance (no paid call), and a per-tool breakdown. |
-| `list_recent_generations` | Recent generations (tool, URLs, cost, balance) so you can re-preview or save an earlier result without regenerating. |
+| `preview_image` | Fetch a URL and return the image **inline**, so the assistant (and GUI clients) can see it |
+| `save_image` | Download an image URL to disk |
+| `validate_image_url` | Check an input URL is a reachable image *before* spending a credit |
+| `usage_summary` | Session totals: generations, credits spent, last-known balance |
+| `list_recent_generations` | Recent results (URLs, cost, balance) to reuse without regenerating |
 
-## Requirements
+Image inputs must be **public URLs**. `outputFormat` is one of `webp`/`jpg`/`png`/`avif`
+(text-to-image: `png`/`jpg`/`webp`). Dimensions range 128–2048px. Generation is synchronous
+(typically under ~10s) and returns the image URL(s) plus the credit cost and remaining balance.
 
-- Node.js **18+** (uses the built-in `fetch`).
-- A MyArchitectAI API key.
+## Install
 
-## Getting an API key
+You need a MyArchitectAI API key — create one in the [portal](https://portal.myarchitectai.com). It
+is passed via the `MYARCHITECTAI_API_KEY` environment variable and sent as the `x-api-key` header.
 
-Sign in at the [MyArchitectAI portal](https://portal.myarchitectai.com) and create an API key.
-
-## Installation
-
-### From source (current)
+### Claude Code
 
 ```bash
-git clone git@github.com:MyArchitectAI/myarchitectai-api-mcp.git
-cd myarchitectai-api-mcp
-npm install
-npm run build
+claude mcp add myarchitectai \
+  --env MYARCHITECTAI_API_KEY=your-api-key \
+  -- npx -y @myarchitectai/mcp
 ```
-
-The runnable server is then at `dist/index.js`.
-
-### Via npx (after publishing to npm)
-
-```bash
-npx -y @myarchitectai/mcp
-```
-
-## Configuration
-
-Configuration is read from environment variables:
-
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `MYARCHITECTAI_API_KEY` | **yes** | — | Your API key, sent as the `x-api-key` header. |
-| `MYARCHITECTAI_BASE_URL` | no | `https://api.myarchitectai.com/v1` | Override the API base URL. |
-| `MYARCHITECTAI_TIMEOUT_MS` | no | `120000` | Per-request timeout in ms (1000–600000). |
-| `MYARCHITECTAI_MAX_RETRIES` | no | `2` | Retries for transient failures, 0 disables (0–10). |
-| `MYARCHITECTAI_DOWNLOAD_DIR` | no | `renders` | Directory `save_image` writes to. |
-| `MYARCHITECTAI_MAX_PREVIEW_BYTES` | no | `5000000` | Max bytes `preview_image` embeds inline before falling back to a URL. |
-| `MYARCHITECTAI_STATE_FILE` | no | — | Optional path to persist generation history across restarts. |
-
-See [`.env.example`](./.env.example).
-
-## Usage
 
 ### Claude Desktop
 
-Add to your `claude_desktop_config.json` (macOS:
-`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "myarchitectai": {
-      "command": "node",
-      "args": ["/absolute/path/to/myarchitectai-mcp/dist/index.js"],
-      "env": { "MYARCHITECTAI_API_KEY": "your-api-key" }
-    }
-  }
-}
-```
-
-After publishing to npm you can instead use:
+Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
 
 ```json
 {
@@ -112,116 +64,113 @@ After publishing to npm you can instead use:
 }
 ```
 
-### Claude Code
+### Cursor, Windsurf, VS Code, and other MCP hosts
 
-```bash
-# From source:
-claude mcp add myarchitectai \
-  --env MYARCHITECTAI_API_KEY=your-api-key \
-  -- node /absolute/path/to/myarchitectai-mcp/dist/index.js
+Use the same stdio launch — command `npx`, args `["-y", "@myarchitectai/mcp"]`, with
+`MYARCHITECTAI_API_KEY` in `env` — in that host's MCP config. (Note: VS Code's config uses the key
+`servers`, not `mcpServers`.)
 
-# After publishing:
-claude mcp add myarchitectai \
-  --env MYARCHITECTAI_API_KEY=your-api-key \
-  -- npx -y @myarchitectai/mcp
-```
+### Claude Code plugin
 
-### Any MCP client
-
-The server communicates over **stdio**. Launch `node dist/index.js` with `MYARCHITECTAI_API_KEY`
-set in the environment and speak MCP over stdin/stdout. Diagnostics are written to stderr only.
-
-### As a Claude Code plugin
-
-A companion **Claude Code plugin** lives in its own repo,
-[`my-architect-ai-plugin`](../my-architect-ai-plugin). It bundles this server (launched via `npx`)
-plus a `compare-renders` skill and a `/render` command, and collects the API key via `userConfig`
-(stored in the OS keychain). See that repo's README to install it.
-
-## Output and error behavior
-
-- **Success** → a text summary listing the generated image URL(s), cost, and balance, plus
-  `structuredContent` of the shape `{ output: string[], balance: number, cost: number }`.
-- **API/validation errors** (bad input, invalid key, rate limits, server errors) are returned as a
-  tool result with `isError: true` and a descriptive message — they do **not** crash the server.
-- **Transient failures** (HTTP 408/425/429/5xx, network errors, timeouts) are retried automatically
-  with exponential backoff and jitter, honoring `Retry-After`. Client errors (400/401/403) are not
-  retried.
-
-## Authentication (and a note on OAuth)
-
-This server authenticates to MyArchitectAI with an **API key** because that is the only scheme the
-MyArchitectAI API supports (`x-api-key` header; see their OpenAPI spec). There is no OAuth
-authorization server on the MyArchitectAI side today.
-
-Two distinct things people mean by "OAuth" here:
-
-1. **OAuth into MyArchitectAI** (end users log in with a MyArchitectAI account). This would require
-   MyArchitectAI to provide an OAuth 2.x authorization server (authorize/token endpoints, scopes,
-   client registration). It does not exist yet, so it requires their cooperation.
-2. **OAuth at the MCP layer.** The MCP spec defines OAuth 2.1 only for **remote/HTTP** servers. This
-   is a **local stdio** server launched as a subprocess, so there is no network boundary to protect
-   and the standard pattern is an environment-variable API key (what we do here).
-
-If this is ever hosted as a remote, multi-tenant MCP server, you would add MCP OAuth 2.1 for the
-client → server hop, but the server would **still** call MyArchitectAI with an API key (one shared
-key, or per-user keys you store). All credential handling lives in `src/config.ts` and the client's
-header injection, so introducing a token/credential provider later is a localized change.
-
-## Development
-
-```bash
-npm run dev        # run from source with watch (tsx)
-npm run build      # compile TypeScript to dist/
-npm run typecheck  # strict type-check of src + tests (no emit)
-npm test           # run the unit + integration test suite
-node scripts/smoke.mjs   # spawn the built server and list its tools over stdio
-```
-
-### Project structure
+For one-command setup with a bundled image-compare skill and a `/render` workflow, install the
+companion plugin: **[myarchitectai-claude-plugin](https://github.com/MyArchitectAI/myarchitectai-claude-plugin)**.
 
 ```
-src/
-  index.ts     # entry point: load config, register tools, serve over stdio
-  config.ts    # env loading/validation + server identity constants
-  client.ts    # HTTP client: auth, timeout, retries, response/error mapping
-  errors.ts    # typed error hierarchy (retryable vs not)
-  schemas.ts   # Zod input/output schemas per tool (mirror the OpenAPI spec)
-  tools.ts     # tool registration + result/error formatting
-test/          # node:test suites (config, client, end-to-end MCP)
-.github/workflows/   # CI (build/typecheck/test) and tag-triggered npm release
-```
-
-## Publishing
-
-Published as [`@myarchitectai/mcp`](https://www.npmjs.com/package/@myarchitectai/mcp) via npm
-[Trusted Publishing (OIDC)](https://docs.npmjs.com/trusted-publishers) — no npm token is stored.
-CI (`.github/workflows/ci.yml`) runs build/typecheck/tests on every push/PR; pushing a version tag
-(`vX.Y.Z`) triggers `.github/workflows/release.yml`, which publishes with provenance.
-
-**One-time setup:**
-
-1. Publish once manually so the package exists (npm requires this before a trusted publisher can be
-   attached): `npm login && npm publish --access public`.
-2. On npmjs.com → `@myarchitectai/mcp` → **Settings → Trusted Publisher → GitHub Actions**:
-   organization `MyArchitectAI`, repository `myarchitectai-api-mcp`, workflow `release.yml`.
-
-**Each release thereafter:**
-
-```bash
-npm version patch   # or minor / major
-git push --follow-tags
+/plugin marketplace add MyArchitectAI/myarchitectai-claude-plugin
+/plugin install myarchitectai@myarchitectai
 ```
 
 ### Docker
+
+A `Dockerfile` is included. Build and run the stdio server (keep stdin attached with `-i`; no port
+is exposed):
 
 ```bash
 docker build -t myarchitectai-mcp .
 docker run -i -e MYARCHITECTAI_API_KEY=your-api-key myarchitectai-mcp
 ```
 
-The image runs the stdio server, so keep stdin attached (`-i`); no port is exposed.
+## Configuration
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `MYARCHITECTAI_API_KEY` | **yes** | — | Your API key (sent as `x-api-key`). |
+| `MYARCHITECTAI_BASE_URL` | no | `https://api.myarchitectai.com/v1` | Override the API base URL. |
+| `MYARCHITECTAI_TIMEOUT_MS` | no | `120000` | Per-request timeout in ms (1000–600000). |
+| `MYARCHITECTAI_MAX_RETRIES` | no | `2` | Retries for transient failures, 0 disables (0–10). |
+| `MYARCHITECTAI_DOWNLOAD_DIR` | no | `renders` | Directory `save_image` writes to. |
+| `MYARCHITECTAI_MAX_PREVIEW_BYTES` | no | `5000000` | Max bytes `preview_image` embeds inline before falling back to a URL. |
+| `MYARCHITECTAI_STATE_FILE` | no | — | Optional path to persist generation history across restarts. |
+
+## Behavior
+
+- **Success** → a text summary listing the generated image URL(s), cost, and balance, plus
+  `structuredContent` of the shape `{ output: string[], balance: number, cost: number }`.
+- **API/validation errors** (bad input, invalid key, rate limits, server errors) are returned as
+  tool results with `isError: true` and a clear message — the server does not crash.
+- **Transient failures** (HTTP 408/425/429/5xx, network errors, timeouts) are retried automatically
+  with exponential backoff + jitter, honoring `Retry-After`. Client errors (400/401/403) are not retried.
+
+## Authentication
+
+The server authenticates with an **API key** (`x-api-key`) — the only scheme the MyArchitectAI API
+supports. It runs locally over stdio, so the key stays in your environment. There is no OAuth
+provider on the API side; OAuth would only become relevant if this were hosted as a remote MCP
+server, and even then the server would still call the API with a key. Credential handling is
+isolated in `src/config.ts` and the client's header injection.
+
+## Contributing
+
+Contributions are welcome — please open an issue or PR. The published npm package is built from this
+repository.
+
+```bash
+git clone https://github.com/MyArchitectAI/myarchitectai-api-mcp.git
+cd myarchitectai-api-mcp
+npm install
+npm run build       # compile TypeScript to dist/
+npm run typecheck   # strict type-check of src + tests
+npm test            # unit + integration tests (node:test)
+node scripts/smoke.mjs   # spawn the built server and list its tools over stdio
+```
+
+Run `npm run build && npm run typecheck && npm test` before submitting a PR.
+
+To point an MCP host at your **local build** instead of the published package, use the command
+`node` with args `["/absolute/path/to/dist/index.js"]`.
+
+### Project layout
+
+```
+src/
+  index.ts     entry point: load config, register tools, serve over stdio
+  config.ts    env loading/validation + server identity
+  client.ts    HTTP client: auth, timeout, retries, response/error mapping
+  errors.ts    typed error hierarchy (retryable vs not)
+  schemas.ts   Zod input/output schemas (mirror the API)
+  tools.ts     tool registration + result/error formatting
+  media.ts     image fetch/save/preview helpers (the QoL tools)
+  session.ts   in-memory (optionally persisted) generation history
+test/          node:test suites (config, client, media, session, end-to-end MCP)
+docs/          DISTRIBUTION.md — per-host coverage & transport notes
+```
+
+### Releasing (maintainers)
+
+Published as [`@myarchitectai/mcp`](https://www.npmjs.com/package/@myarchitectai/mcp) via npm
+[Trusted Publishing (OIDC)](https://docs.npmjs.com/trusted-publishers) — no token is stored. CI runs
+build/typecheck/tests on every push and PR; pushing a `vX.Y.Z` tag triggers
+`.github/workflows/release.yml`, which publishes with provenance.
+
+```bash
+npm version patch   # or minor / major — bumps package.json and creates the tag
+git push --follow-tags
+```
+
+One-time setup: publish once manually (`npm publish --access public`) so the package exists, then
+attach the GitHub Actions trusted publisher under the npm package's **Settings → Trusted Publisher**
+(organization `MyArchitectAI`, repository `myarchitectai-api-mcp`, workflow `release.yml`).
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](./LICENSE) © MyArchitectAI
