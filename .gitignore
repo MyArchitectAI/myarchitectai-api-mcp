@@ -10,3 +10,6 @@ renders/
 
 # Claude Code local (personal) settings
 .claude/settings.local.json
+
+# npm pack artifacts
+*.tgz

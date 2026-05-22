@@ -23,6 +23,7 @@
   },
   "main": "dist/index.js",
   "bin": {
+    "mcp": "dist/index.js",
     "myarchitectai-mcp": "dist/index.js"
   },
   "files": [
