@@ -31,9 +31,11 @@ save, and track results.
 | `usage_summary` | Session totals: generations, credits spent, last-known balance |
 | `list_recent_generations` | Recent results (URLs, cost, balance) to reuse without regenerating |
 
-Image inputs must be **public URLs**. `outputFormat` is one of `webp`/`jpg`/`png`/`avif`
-(text-to-image: `png`/`jpg`/`webp`). Dimensions range 128–2048px. Generation is synchronous
-(typically under ~10s) and returns the image URL(s) plus the credit cost and remaining balance.
+Image inputs accept either a **public HTTPS URL** reachable by MyArchitectAI, or an inline
+**`data:image/<mime>;base64,<payload>`** URI for local files. `outputFormat` is one of
+`webp`/`jpg`/`png`/`avif` (text-to-image: `png`/`jpg`/`webp`). Dimensions range 128–2048px.
+Generation is synchronous (typically under ~10s) and returns the image URL(s) plus the credit cost
+and remaining balance.
 
 ## Install
 
