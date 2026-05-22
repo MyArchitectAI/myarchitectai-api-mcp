@@ -43,8 +43,6 @@ both as a human-readable summary and as machine-readable `structuredContent`.
 ## Getting an API key
 
 Sign in at the [MyArchitectAI portal](https://portal.myarchitectai.com) and create an API key.
-The free tier includes a limited number of requests per month. The key is sent on every request
-as the `x-api-key` header.
 
 ## Installation
 
