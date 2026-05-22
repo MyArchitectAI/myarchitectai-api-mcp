@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "myarchitectai": {
-      "command": "npx",
-      "args": ["-y", "@myarchitectai/mcp"],
+      "command": "node",
+      "args": ["dist/index.js"],
       "env": {
         "MYARCHITECTAI_API_KEY": "${MYARCHITECTAI_API_KEY}"
       }
