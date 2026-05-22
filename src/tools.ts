@@ -12,7 +12,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { Config } from './config.js';
+import { apiKeyFingerprint, type Config } from './config.js';
 import type { GenerationResult, MyArchitectAIClient } from './client.js';
 import { MediaService, openInBrowser } from './media.js';
 import type { SessionStore } from './session.js';
@@ -267,7 +267,9 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
     },
     async () => {
       const summary = deps.session.summary();
+      const fingerprint = apiKeyFingerprint(deps.config.apiKey);
       const lines = [
+        `API key: ${fingerprint}`,
         `Generations this session: ${summary.totalGenerations}`,
         `Total cost: ${formatNumber(summary.totalCost)} credits`,
         `Last known balance: ${summary.lastKnownBalance === null ? 'unknown (no generations yet)' : `${formatNumber(summary.lastKnownBalance)} credits`}`,
@@ -283,6 +285,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
           lastKnownBalance: summary.lastKnownBalance,
           byTool: summary.byTool,
           since: summary.since,
+          apiKeyFingerprint: fingerprint,
         },
       };
     },

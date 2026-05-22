@@ -165,4 +165,9 @@ export const usageOutputShape = {
     .record(z.string(), z.object({ count: z.number(), cost: z.number() }))
     .describe('Per-tool breakdown of count and cost.'),
   since: z.string().nullable().describe('Timestamp of the first recorded generation, or null.'),
+  apiKeyFingerprint: z
+    .string()
+    .describe(
+      'Masked fingerprint (leading ellipsis + last 4 characters) of the active API key, so you can confirm which key is in use without exposing the full secret.',
+    ),
 };

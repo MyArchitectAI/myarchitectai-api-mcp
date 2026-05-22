@@ -174,4 +174,15 @@ describe('MCP server integration', () => {
     assert.equal(structured.lastKnownBalance, 7);
     await client.close();
   });
+
+  it('usage_summary exposes a masked api key fingerprint', async () => {
+    const client = await connect(buildServer(async () => new Response('{}')));
+
+    const result = await client.callTool({ name: 'usage_summary', arguments: {} });
+
+    const structured = result.structuredContent as { apiKeyFingerprint: string };
+    assert.equal(structured.apiKeyFingerprint, '…k'); // testConfig.apiKey === 'k'
+    assert.match(firstText(result.content), /API key: …k/);
+    await client.close();
+  });
 });

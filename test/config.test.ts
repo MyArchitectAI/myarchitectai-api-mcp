@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { DEFAULT_BASE_URL, loadConfig } from '../src/config.js';
+import { apiKeyFingerprint, DEFAULT_BASE_URL, loadConfig } from '../src/config.js';
 import { ConfigError } from '../src/errors.js';
 
 describe('loadConfig', () => {
@@ -62,5 +62,21 @@ describe('loadConfig', () => {
     assert.throws(() => loadConfig({ ...key, MYARCHITECTAI_TIMEOUT_MS: 'abc' }), ConfigError);
     assert.throws(() => loadConfig({ ...key, MYARCHITECTAI_MAX_RETRIES: '-1' }), ConfigError);
     assert.throws(() => loadConfig({ ...key, MYARCHITECTAI_MAX_RETRIES: '99' }), ConfigError);
+  });
+});
+
+describe('apiKeyFingerprint', () => {
+  it('masks all but the last 4 characters', () => {
+    assert.equal(apiKeyFingerprint('sk-abcdef123456789'), '…6789');
+  });
+
+  it('never reveals more than the last 4 characters of a long key', () => {
+    const fp = apiKeyFingerprint('super-secret-key-XUX9');
+    assert.equal(fp, '…XUX9');
+    assert.ok(!fp.includes('secret'));
+  });
+
+  it('handles short keys without throwing', () => {
+    assert.equal(apiKeyFingerprint('k'), '…k');
   });
 });
