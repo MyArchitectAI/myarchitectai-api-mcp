@@ -9,8 +9,10 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FetchLike } from './client.js';
 import { MyArchitectAIError, NetworkError, RequestError, TimeoutError, UpstreamError } from './errors.js';
 
@@ -76,11 +78,27 @@ export class MediaService {
     };
   }
 
-  /** Fetch an image for inline preview, falling back to "too large" if it exceeds the embed limit. */
-  async fetchForPreview(rawUrl: string): Promise<PreviewFetch> {
-    const response = await this.#request(rawUrl, 'GET');
+  /**
+   * Load an image for inline preview from an HTTPS URL, a `data:` URI, or a
+   * local file path, falling back to "too large" if it exceeds the embed limit.
+   */
+  async fetchForPreview(rawInput: string): Promise<PreviewFetch> {
+    if (classifyImageInput(rawInput) !== 'http') {
+      const { bytes, mimeType } = await loadLocalOrDataImage(rawInput);
+      if (bytes.byteLength > this.#maxBytes) {
+        return { tooLarge: true, bytes: bytes.byteLength, mimeType };
+      }
+      if (!isImageMime(mimeType)) {
+        throw new RequestError(
+          `Input is not an image (content-type: ${mimeType}): ${describeSource(rawInput)}`,
+        );
+      }
+      return { tooLarge: false, mimeType, bytes: bytes.byteLength, base64: bytes.toString('base64') };
+    }
+
+    const response = await this.#request(rawInput, 'GET');
     if (!response.ok) {
-      throw new UpstreamError(`Image fetch failed: HTTP ${response.status} for ${rawUrl}`, {
+      throw new UpstreamError(`Image fetch failed: HTTP ${response.status} for ${rawInput}`, {
         status: response.status,
         retryable: false,
       });
@@ -95,7 +113,7 @@ export class MediaService {
       return { tooLarge: true, bytes: bytes.byteLength, mimeType: contentType };
     }
     if (!isImageMime(contentType)) {
-      throw new RequestError(`URL did not return an image (content-type: ${contentType ?? 'unknown'}): ${rawUrl}`);
+      throw new RequestError(`URL did not return an image (content-type: ${contentType ?? 'unknown'}): ${rawInput}`);
     }
     return {
       tooLarge: false,
@@ -105,21 +123,37 @@ export class MediaService {
     };
   }
 
-  /** Download an image URL to disk under `dir`, returning the saved path. */
-  async save(rawUrl: string, opts: { dir: string; filename?: string }): Promise<SavedImage> {
-    const response = await this.#request(rawUrl, 'GET');
-    if (!response.ok) {
-      throw new UpstreamError(`Image download failed: HTTP ${response.status} for ${rawUrl}`, {
-        status: response.status,
-        retryable: false,
-      });
+  /**
+   * Save an image to disk under `dir` from an HTTPS URL, a `data:` URI, or a
+   * local file path, returning the saved path.
+   */
+  async save(rawInput: string, opts: { dir: string; filename?: string }): Promise<SavedImage> {
+    const kind = classifyImageInput(rawInput);
+
+    let mimeType: string;
+    let buffer: Buffer;
+    let nameHint: string;
+    if (kind === 'http') {
+      const response = await this.#request(rawInput, 'GET');
+      if (!response.ok) {
+        throw new UpstreamError(`Image download failed: HTTP ${response.status} for ${rawInput}`, {
+          status: response.status,
+          retryable: false,
+        });
+      }
+      mimeType = response.headers.get('content-type') ?? 'application/octet-stream';
+      buffer = Buffer.from(new Uint8Array(await response.arrayBuffer()));
+      nameHint = filenameFromUrl(rawInput);
+    } else {
+      const loaded = await loadLocalOrDataImage(rawInput);
+      mimeType = loaded.mimeType;
+      buffer = loaded.bytes;
+      nameHint = kind === 'path' ? path.basename(resolveLocalPath(rawInput)) : 'image';
     }
-    const mimeType = response.headers.get('content-type') ?? 'application/octet-stream';
-    const buffer = Buffer.from(new Uint8Array(await response.arrayBuffer()));
 
     const dirAbs = path.resolve(opts.dir);
     await mkdir(dirAbs, { recursive: true });
-    const name = ensureExtension(sanitizeFilename(opts.filename ?? filenameFromUrl(rawUrl)), mimeType);
+    const name = ensureExtension(sanitizeFilename(opts.filename ?? nameHint), mimeType);
     const dest = await uniquePath(path.join(dirAbs, name));
     await writeFile(dest, buffer);
     return { path: dest, bytes: buffer.byteLength, mimeType };
@@ -207,6 +241,81 @@ function isPrivateHost(host: string): boolean {
 
 function isImageMime(contentType: string | null): boolean {
   return contentType !== null && contentType.toLowerCase().startsWith('image/');
+}
+
+type ImageInputKind = 'http' | 'data' | 'path';
+
+/** Classify a preview/save input as an HTTP(S) URL, a `data:` URI, or a local path. */
+export function classifyImageInput(raw: string): ImageInputKind {
+  if (/^https?:\/\//i.test(raw)) return 'http';
+  if (/^data:/i.test(raw)) return 'data';
+  return 'path'; // absolute, relative, ~, or file://
+}
+
+const EXT_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+};
+
+function mimeFromPath(filePath: string): string {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  return EXT_MIME[ext] ?? 'application/octet-stream';
+}
+
+/** Resolve a local input (absolute, relative, `~`, or `file://`) to an absolute path. */
+function resolveLocalPath(raw: string): string {
+  if (/^file:\/\//i.test(raw)) {
+    try {
+      return fileURLToPath(raw);
+    } catch {
+      throw new RequestError(`Invalid file:// URL: ${raw}`);
+    }
+  }
+  const expanded = raw === '~' || raw.startsWith('~/') ? path.join(homedir(), raw.slice(1)) : raw;
+  return path.resolve(expanded);
+}
+
+/** Decode a `data:[<mime>][;base64],<payload>` URI into bytes + mime type. */
+function decodeDataUri(raw: string): { bytes: Buffer; mimeType: string } {
+  const comma = raw.indexOf(',');
+  if (comma === -1) throw new RequestError('Invalid data: URI (missing comma).');
+  const meta = raw.slice('data:'.length, comma);
+  const payload = raw.slice(comma + 1);
+  const segments = meta.split(';');
+  const mimeType = segments[0]?.trim() || 'application/octet-stream';
+  const isBase64 = segments.slice(1).some((s) => s.trim().toLowerCase() === 'base64');
+  const bytes = isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8');
+  return { bytes, mimeType };
+}
+
+async function readLocalImage(raw: string): Promise<{ bytes: Buffer; mimeType: string }> {
+  const abs = resolveLocalPath(raw);
+  try {
+    const bytes = await readFile(abs);
+    return { bytes, mimeType: mimeFromPath(abs) };
+  } catch (err) {
+    throw new RequestError(`Cannot read local file ${abs}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Load bytes + mime for a non-HTTP input (a `data:` URI or a local file path). */
+async function loadLocalOrDataImage(raw: string): Promise<{ bytes: Buffer; mimeType: string }> {
+  return classifyImageInput(raw) === 'data' ? decodeDataUri(raw) : readLocalImage(raw);
+}
+
+/** A short, log-safe label for an image input (a `data:` URI can be megabytes long). */
+export function describeSource(input: string): string {
+  if (/^data:/i.test(input)) {
+    const semi = input.indexOf(';');
+    const head = semi === -1 ? input.slice(0, Math.min(input.length, 24)) : input.slice(0, semi);
+    return `${head};base64,… (inline data URI)`;
+  }
+  return input;
 }
 
 function extensionFromMime(contentType: string): string | undefined {

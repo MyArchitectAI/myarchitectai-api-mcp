@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
@@ -17,6 +17,15 @@ function imageResponse(bytes: number, mimeType = 'image/png', headers: Record<st
 function options(fetchImpl: FetchLike): { timeoutMs: number; maxBytes: number; fetchImpl: FetchLike } {
   return { timeoutMs: 1000, maxBytes: 1000, fetchImpl };
 }
+
+// 1x1 transparent PNG.
+const PNG_DATA_URI =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+/** A fetch stub that fails loudly — data:/local inputs must never touch the network. */
+const noFetch: FetchLike = async () => {
+  throw new Error('network should not be used for data:/local inputs');
+};
 
 describe('assertSafeUrl', () => {
   it('accepts public http(s) URLs', () => {
@@ -81,6 +90,73 @@ describe('MediaService', () => {
       assert.equal(saved.mimeType, 'image/png');
       const onDisk = await readFile(saved.path);
       assert.equal(onDisk.byteLength, 64);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fetchForPreview() decodes a base64 data: URI without using the network', async () => {
+    const media = new MediaService(options(noFetch));
+    const result = await media.fetchForPreview(PNG_DATA_URI);
+    assert.equal(result.tooLarge, false);
+    if (!result.tooLarge) {
+      assert.equal(result.mimeType, 'image/png');
+      assert.ok(result.base64.length > 0);
+    }
+  });
+
+  it('fetchForPreview() reads a local image file without using the network', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
+    try {
+      const file = path.join(dir, 'pic.png');
+      await writeFile(file, Buffer.from(new Uint8Array(48).fill(7)));
+      const media = new MediaService(options(noFetch));
+      const result = await media.fetchForPreview(file);
+      assert.equal(result.tooLarge, false);
+      if (!result.tooLarge) {
+        assert.equal(result.mimeType, 'image/png');
+        assert.ok(result.base64.length > 0);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fetchForPreview() rejects a local non-image file', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
+    try {
+      const file = path.join(dir, 'notes.txt');
+      await writeFile(file, 'hello');
+      const media = new MediaService(options(noFetch));
+      await assert.rejects(() => media.fetchForPreview(file), RequestError);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('save() writes a base64 data: URI to disk', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
+    try {
+      const media = new MediaService(options(noFetch));
+      const saved = await media.save(PNG_DATA_URI, { dir });
+      assert.equal(saved.mimeType, 'image/png');
+      assert.ok(saved.path.endsWith('.png'));
+      const onDisk = await readFile(saved.path);
+      assert.ok(onDisk.byteLength > 0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('save() copies a local image file to the target dir', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
+    try {
+      const src = path.join(dir, 'src.png');
+      await writeFile(src, Buffer.from(new Uint8Array(20).fill(9)));
+      const media = new MediaService(options(noFetch));
+      const saved = await media.save(src, { dir: path.join(dir, 'out') });
+      assert.equal(saved.bytes, 20);
+      assert.equal(saved.mimeType, 'image/png');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
