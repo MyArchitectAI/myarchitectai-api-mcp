@@ -226,7 +226,7 @@ function filenameFromUrl(rawUrl: string): string {
 function sanitizeFilename(name: string): string {
   const cleaned = name
     .replace(/[/\\]/g, '_')
-    .replace(/[^\w.\-]+/g, '_')
+    .replace(/[^\w.-]+/g, '_')
     .replace(/^\.+/, '')
     .slice(0, 200);
   return cleaned || 'image';

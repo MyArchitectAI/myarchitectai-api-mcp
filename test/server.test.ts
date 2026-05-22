@@ -110,7 +110,7 @@ describe('MCP server integration', () => {
   it('rejects input that violates the schema (width out of range)', async () => {
     const client = await connect(buildServer(async () => new Response('{}')));
 
-    let failed = false;
+    let failed: boolean;
     try {
       const result = await client.callTool({
         name: 'text_to_image',
