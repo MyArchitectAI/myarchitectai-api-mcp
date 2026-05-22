@@ -1,12 +1,28 @@
 /**
  * Server identity and runtime configuration, loaded and validated from the
- * environment. Keep {@link SERVER_VERSION} in sync with `package.json`.
+ * environment.
  */
 
+import { readFileSync } from 'node:fs';
 import { ConfigError } from './errors.js';
 
 export const SERVER_NAME = 'myarchitectai-mcp';
-export const SERVER_VERSION = '0.1.0';
+
+/**
+ * Server version, read from package.json at runtime so it can't drift from the
+ * published package. package.json is always present in the npm tarball and sits
+ * one directory above the compiled `dist/` (and above `src/` in development).
+ */
+export const SERVER_VERSION: string = ((): string => {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+      version?: string;
+    };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 export const DEFAULT_BASE_URL = 'https://api.myarchitectai.com/v1';
 
