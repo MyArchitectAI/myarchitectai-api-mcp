@@ -5,8 +5,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 Claude Desktop, Claude Code, and Cursor. Generate photorealistic architectural renders, transfer
 styles, create images from text, and upscale to 4K — all as tools your assistant can call.
 
-> **Note:** the npm package name (`myarchitectai-mcp`) is a placeholder. Pick the final
-> name/scope before publishing — see [Publishing](#publishing).
+> Published on npm as [`@myarchitectai/mcp`](https://www.npmjs.com/package/@myarchitectai/mcp).
 
 ## Features
 
@@ -52,8 +51,8 @@ as the `x-api-key` header.
 ### From source (current)
 
 ```bash
-git clone <your-repo-url> myarchitectai-mcp
-cd myarchitectai-mcp
+git clone git@github.com:MyArchitectAI/myarchitectai-api-mcp.git
+cd myarchitectai-api-mcp
 npm install
 npm run build
 ```
@@ -63,7 +62,7 @@ The runnable server is then at `dist/index.js`.
 ### Via npx (after publishing to npm)
 
 ```bash
-npx -y myarchitectai-mcp
+npx -y @myarchitectai/mcp
 ```
 
 ## Configuration
@@ -108,7 +107,7 @@ After publishing to npm you can instead use:
   "mcpServers": {
     "myarchitectai": {
       "command": "npx",
-      "args": ["-y", "myarchitectai-mcp"],
+      "args": ["-y", "@myarchitectai/mcp"],
       "env": { "MYARCHITECTAI_API_KEY": "your-api-key" }
     }
   }
@@ -126,7 +125,7 @@ claude mcp add myarchitectai \
 # After publishing:
 claude mcp add myarchitectai \
   --env MYARCHITECTAI_API_KEY=your-api-key \
-  -- npx -y myarchitectai-mcp
+  -- npx -y @myarchitectai/mcp
 ```
 
 ### Any MCP client
@@ -197,22 +196,24 @@ test/          # node:test suites (config, client, end-to-end MCP)
 
 ## Publishing
 
-CI runs build, typecheck, and tests on every push/PR (`.github/workflows/ci.yml`). Pushing a
-version tag (`vX.Y.Z`) triggers `.github/workflows/release.yml`, which publishes to npm with
-[provenance](https://docs.npmjs.com/generating-provenance-statements).
+Published as [`@myarchitectai/mcp`](https://www.npmjs.com/package/@myarchitectai/mcp) via npm
+[Trusted Publishing (OIDC)](https://docs.npmjs.com/trusted-publishers) — no npm token is stored.
+CI (`.github/workflows/ci.yml`) runs build/typecheck/tests on every push/PR; pushing a version tag
+(`vX.Y.Z`) triggers `.github/workflows/release.yml`, which publishes with provenance.
 
-**Before the first publish:**
+**One-time setup:**
 
-1. Set the final `name` (and scope) in `package.json`.
-2. Update `repository`, `bugs`, and `homepage` to the real GitHub URLs (required for provenance).
-3. Add an `NPM_TOKEN` repository secret (an npm automation/granular token), **or** configure npm
-   [Trusted Publishing (OIDC)](https://docs.npmjs.com/trusted-publishers) and remove the token.
-4. Tag and push:
+1. Publish once manually so the package exists (npm requires this before a trusted publisher can be
+   attached): `npm login && npm publish --access public`.
+2. On npmjs.com → `@myarchitectai/mcp` → **Settings → Trusted Publisher → GitHub Actions**:
+   organization `MyArchitectAI`, repository `myarchitectai-api-mcp`, workflow `release.yml`.
 
-   ```bash
-   npm version patch   # or minor / major
-   git push --follow-tags
-   ```
+**Each release thereafter:**
+
+```bash
+npm version patch   # or minor / major
+git push --follow-tags
+```
 
 ### Docker
 
