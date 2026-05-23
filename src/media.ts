@@ -146,6 +146,11 @@ export class MediaService {
       nameHint = filenameFromUrl(rawInput);
     } else {
       const loaded = await loadLocalOrDataImage(rawInput);
+      if (!isImageMime(loaded.mimeType)) {
+        throw new RequestError(
+          `Input is not an image (content-type: ${loaded.mimeType}): ${describeSource(rawInput)}`,
+        );
+      }
       mimeType = loaded.mimeType;
       buffer = loaded.bytes;
       nameHint = kind === 'path' ? path.basename(resolveLocalPath(rawInput)) : 'image';
@@ -276,6 +281,11 @@ function resolveLocalPath(raw: string): string {
       throw new RequestError(`Invalid file:// URL: ${raw}`);
     }
   }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+    throw new RequestError(
+      `Unsupported URL scheme: ${raw}. Expected an https:// URL, a data: URI, or a local file path.`,
+    );
+  }
   const expanded = raw === '~' || raw.startsWith('~/') ? path.join(homedir(), raw.slice(1)) : raw;
   return path.resolve(expanded);
 }
@@ -289,7 +299,16 @@ function decodeDataUri(raw: string): { bytes: Buffer; mimeType: string } {
   const segments = meta.split(';');
   const mimeType = segments[0]?.trim() || 'application/octet-stream';
   const isBase64 = segments.slice(1).some((s) => s.trim().toLowerCase() === 'base64');
-  const bytes = isBase64 ? Buffer.from(payload, 'base64') : Buffer.from(decodeURIComponent(payload), 'utf8');
+  let bytes: Buffer;
+  if (isBase64) {
+    bytes = Buffer.from(payload, 'base64');
+  } else {
+    try {
+      bytes = Buffer.from(decodeURIComponent(payload), 'utf8');
+    } catch {
+      throw new RequestError('Invalid data: URI (malformed percent-encoding).');
+    }
+  }
   return { bytes, mimeType };
 }
 

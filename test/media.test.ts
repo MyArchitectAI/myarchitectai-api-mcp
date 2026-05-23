@@ -161,4 +161,26 @@ describe('MediaService', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('rejects a data: URI with malformed percent-encoding', async () => {
+    const media = new MediaService(options(noFetch));
+    await assert.rejects(() => media.fetchForPreview('data:image/svg+xml,%E0%A4%A'), RequestError);
+  });
+
+  it('save() refuses to write a non-image data: URI', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
+    try {
+      const media = new MediaService(options(noFetch));
+      // "hello" as text/plain — must not be written to disk by save_image.
+      await assert.rejects(() => media.save('data:text/plain;base64,aGVsbG8=', { dir }), RequestError);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an unsupported URL scheme (e.g. ftp://)', async () => {
+    const media = new MediaService(options(noFetch));
+    await assert.rejects(() => media.fetchForPreview('ftp://example.com/x.png'), RequestError);
+    await assert.rejects(() => media.save('ftp://example.com/x.png', { dir: '/tmp' }), RequestError);
+  });
 });
