@@ -1,8 +1,13 @@
 name: Claude Review
 
-# Automated PR review by the Claude Code GitHub Action.
-# Requires a `CLAUDE_CODE_OAUTH_TOKEN` secret — generate it with `claude setup-token`
-# (Claude Pro/Max). Skips fork PRs, which can't access secrets.
+# Automated PR review via the Claude Code GitHub Action.
+# `track_progress: true` posts the result as a SINGLE comment that is updated in
+# place on re-runs (no duplicate comments), and only when there's something to
+# say. Requires a CLAUDE_CODE_OAUTH_TOKEN secret (`claude setup-token`, Claude
+# Pro/Max). Skips fork PRs, which can't access secrets.
+#
+# Note: the action validates that this workflow matches the copy on the default
+# branch, so changes here only take effect once merged to main.
 
 on:
   pull_request:
@@ -25,17 +30,17 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
           prompt: |
-            Review this pull request as a senior engineer on a small, strict TypeScript
-            codebase. Prioritise, in order:
-            1. Correctness bugs, missing edge cases, and inadequate error handling.
-            2. Type-safety and security — this server handles a user API key; flag any
-               path that could log, leak, or mishandle it.
-            3. Whether new behaviour is covered by tests (node:test suites in test/).
-            4. Whether user-facing changes have a CHANGELOG.md [Unreleased] entry; if one
-               is missing, suggest the exact line to add.
-            Post specific, actionable inline comments on the relevant lines. Don't praise
-            or summarise obvious things. If the PR is solid, say so in one line.
+            Review only the diff of this pull request. Be terse and high-signal.
+
+            Comment ONLY on concrete problems: correctness bugs, missing edge
+            cases, broken error handling, security or API-key mishandling, or new
+            behaviour shipped without a test. Write each as a single line —
+            `path:line — the problem`. Do not praise, do not summarise what the PR
+            does, and do not raise style or nit-level points.
+
+            If you find no such problems, do not write any findings.
           claude_args: |
-            --max-turns 12
+            --max-turns 10
             --model claude-sonnet-4-6
