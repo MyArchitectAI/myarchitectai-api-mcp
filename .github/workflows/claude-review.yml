@@ -1,9 +1,10 @@
 name: Claude Review
 
-# Automated PR review via the Claude Code GitHub Action.
-# `track_progress: true` posts the result as a SINGLE comment that is updated in
-# place on re-runs (no duplicate comments), and only when there's something to
-# say. Requires a CLAUDE_CODE_OAUTH_TOKEN secret (`claude setup-token`, Claude
+# Automated PR review via the Claude Code GitHub Action. Posts INLINE comments on
+# the specific lines where it finds issues (via the action's inline-comment
+# tool), and only when there are issues — no top-level summary comment (so no
+# `track_progress`, which would consolidate everything into one comment).
+# Requires a CLAUDE_CODE_OAUTH_TOKEN secret (`claude setup-token`, Claude
 # Pro/Max). Skips fork PRs, which can't access secrets.
 #
 # Note: the action validates that this workflow matches the copy on the default
@@ -30,17 +31,17 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          track_progress: true
           prompt: |
-            Review only the diff of this pull request. Be terse and high-signal.
+            Review the diff of this pull request. For EACH concrete problem you
+            find — a correctness bug, missing edge case, broken error handling,
+            security or API-key mishandling, or new behaviour shipped without a
+            test — leave an INLINE review comment on the exact offending line using
+            the inline-comment tool (mcp__github_inline_comment__create_inline_comment).
+            Keep each comment to one or two sentences.
 
-            Comment ONLY on concrete problems: correctness bugs, missing edge
-            cases, broken error handling, security or API-key mishandling, or new
-            behaviour shipped without a test. Write each as a single line —
-            `path:line — the problem`. Do not praise, do not summarise what the PR
-            does, and do not raise style or nit-level points.
-
-            If you find no such problems, do not write any findings.
+            Do NOT post a top-level summary comment, do not praise, and do not raise
+            style or nit-level points. If you find no such problems, leave no
+            comments at all.
           claude_args: |
-            --max-turns 10
+            --max-turns 15
             --model claude-sonnet-4-6
