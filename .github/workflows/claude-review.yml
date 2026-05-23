@@ -1,14 +1,21 @@
 name: Claude Review
 
-# Automated PR review via the Claude Code GitHub Action. Posts INLINE comments on
-# the specific lines where it finds issues (via the action's inline-comment
-# tool), and only when there are issues — no top-level summary comment (so no
-# `track_progress`, which would consolidate everything into one comment).
+# Automated PR review via the Claude Code GitHub Action. Reads the diff with
+# `gh pr diff` and posts INLINE comments on the specific offending lines via the
+# action's buffered inline-comment tool — only when it finds real issues.
+#
+# Read-only by design: the allowlist grants the inline-comment tool plus
+# read-only `gh pr diff/view` and Read/Grep/Glob — NOT `gh pr comment` — so it
+# physically cannot post a top-level summary. (We avoid `track_progress: true`
+# because it force-adds Write/Edit/git tools that can't be pared back, and posts
+# a tracking comment we don't want.)
+#
 # Requires a CLAUDE_CODE_OAUTH_TOKEN secret (`claude setup-token`, Claude
 # Pro/Max). Skips fork PRs, which can't access secrets.
 #
 # Note: the action validates that this workflow matches the copy on the default
-# branch, so changes here only take effect once merged to main.
+# branch, so changes here take effect only once merged to main — they cannot be
+# tested on their own PR (you'll get "Workflow validation failed").
 
 on:
   pull_request:
@@ -32,17 +39,23 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
-            Review the diff of this pull request. For EACH concrete problem you
-            find — a correctness bug, missing edge case, broken error handling,
-            security or API-key mishandling, or new behaviour shipped without a
-            test — leave an INLINE review comment on the exact offending line using
-            the inline-comment tool (mcp__github_inline_comment__create_inline_comment).
-            Keep each comment to one or two sentences.
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Do NOT post a top-level summary comment, do not praise, and do not raise
-            style or nit-level points. If you find no such problems, leave no
-            comments at all.
+            Run `gh pr diff` to see this pull request's changes, and read the
+            surrounding files for context.
+
+            For EACH concrete problem you find — a correctness bug, missing edge
+            case, broken error handling, security or API-key mishandling, or new
+            behaviour shipped without a test — post an INLINE comment on the exact
+            offending line using mcp__github_inline_comment__create_inline_comment
+            with `confirmed: true`. Keep each comment to one or two sentences.
+
+            Do NOT post a top-level summary comment, do not praise, and do not
+            raise style or nit-level points. If you find no such problems, post no
+            comments at all. Only post GitHub inline comments — never output the
+            review as a chat message.
           claude_args: |
-            --allowedTools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment"
-            --max-turns 15
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+            --max-turns 20
             --model claude-sonnet-4-6
