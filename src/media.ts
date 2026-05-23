@@ -85,13 +85,15 @@ export class MediaService {
   async fetchForPreview(rawInput: string): Promise<PreviewFetch> {
     if (classifyImageInput(rawInput) !== 'http') {
       const { bytes, mimeType } = await loadLocalOrDataImage(rawInput);
-      if (bytes.byteLength > this.#maxBytes) {
-        return { tooLarge: true, bytes: bytes.byteLength, mimeType };
-      }
+      // We already hold the bytes, so reject non-images before deciding "too
+      // large": a 5 MB zip should error as not-an-image, not report tooLarge.
       if (!isImageMime(mimeType)) {
         throw new RequestError(
           `Input is not an image (content-type: ${mimeType}): ${describeSource(rawInput)}`,
         );
+      }
+      if (bytes.byteLength > this.#maxBytes) {
+        return { tooLarge: true, bytes: bytes.byteLength, mimeType };
       }
       return { tooLarge: false, mimeType, bytes: bytes.byteLength, base64: bytes.toString('base64') };
     }
@@ -301,7 +303,7 @@ function decodeDataUri(raw: string): { bytes: Buffer; mimeType: string } {
   const isBase64 = segments.slice(1).some((s) => s.trim().toLowerCase() === 'base64');
   let bytes: Buffer;
   if (isBase64) {
-    bytes = Buffer.from(payload, 'base64');
+    bytes = decodeBase64Strict(payload);
   } else {
     try {
       bytes = Buffer.from(decodeURIComponent(payload), 'utf8');
@@ -310,6 +312,25 @@ function decodeDataUri(raw: string): { bytes: Buffer; mimeType: string } {
     }
   }
   return { bytes, mimeType };
+}
+
+/**
+ * Decode a base64 data-URI payload, rejecting malformed input. `Buffer.from`
+ * silently drops invalid characters and truncated groups, so a corrupt payload
+ * would otherwise decode to wrong bytes with no error — we validate the charset
+ * and require the bytes to round-trip back to the input.
+ */
+function decodeBase64Strict(payload: string): Buffer {
+  const normalized = payload.replace(/\s/g, '');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
+    throw new RequestError('Invalid data: URI (base64 payload has invalid characters).');
+  }
+  const bytes = Buffer.from(normalized, 'base64');
+  const stripPad = (s: string): string => s.replace(/=+$/, '');
+  if (stripPad(bytes.toString('base64')) !== stripPad(normalized)) {
+    throw new RequestError('Invalid data: URI (truncated or malformed base64 payload).');
+  }
+  return bytes;
 }
 
 async function readLocalImage(raw: string): Promise<{ bytes: Buffer; mimeType: string }> {
@@ -330,9 +351,11 @@ async function loadLocalOrDataImage(raw: string): Promise<{ bytes: Buffer; mimeT
 /** A short, log-safe label for an image input (a `data:` URI can be megabytes long). */
 export function describeSource(input: string): string {
   if (/^data:/i.test(input)) {
-    const semi = input.indexOf(';');
-    const head = semi === -1 ? input.slice(0, Math.min(input.length, 24)) : input.slice(0, semi);
-    return `${head};base64,… (inline data URI)`;
+    // Show the real metadata (mime + any encoding token), not a fabricated
+    // ";base64" — the payload may be plain text (e.g. `data:text/plain,hello`).
+    const comma = input.indexOf(',');
+    const meta = (comma === -1 ? input.slice('data:'.length) : input.slice('data:'.length, comma)).slice(0, 64);
+    return `data:${meta},… (inline data URI)`;
   }
   return input;
 }

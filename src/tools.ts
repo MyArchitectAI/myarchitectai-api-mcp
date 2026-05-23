@@ -14,7 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Config } from './config.js';
 import type { GenerationResult, MyArchitectAIClient } from './client.js';
-import { describeSource, MediaService, openInBrowser } from './media.js';
+import { classifyImageInput, describeSource, MediaService, openInBrowser } from './media.js';
 import type { SessionStore } from './session.js';
 import { MyArchitectAIError } from './errors.js';
 import {
@@ -173,12 +173,20 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
     async ({ url, open }) => {
       try {
         const fetched = await deps.media.fetchForPreview(url);
-        const opened = open === true ? openInBrowser(url) : false;
-        const note = openNote(open === true, opened);
+        // A data: URI *is* the image, not a path/URL the OS can open — never hand
+        // megabytes of base64 to `open`/`xdg-open`, nor tell the user to open it.
+        const isDataUri = classifyImageInput(url) === 'data';
+        const opened = open === true && !isDataUri ? openInBrowser(url) : false;
+        const note = open === true && isDataUri
+          ? ' — inline data URI, nothing to open in a browser.'
+          : openNote(open === true, opened);
         if (fetched.tooLarge) {
+          const tail = isDataUri
+            ? ' The inline data URI is too large to display.'
+            : `\nOpen it directly:\n${describeSource(url)}`;
           return text(
             `Image is ${formatBytes(fetched.bytes)} — too large to embed inline ` +
-              `(limit ${formatBytes(deps.config.maxPreviewBytes)}). Open it directly:\n${describeSource(url)}${note}`,
+              `(limit ${formatBytes(deps.config.maxPreviewBytes)}).${tail}${note}`,
           );
         }
         return {

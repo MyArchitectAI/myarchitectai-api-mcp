@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import type { FetchLike } from '../src/client.js';
 import { RequestError } from '../src/errors.js';
-import { assertSafeUrl, MediaService } from '../src/media.js';
+import { assertSafeUrl, describeSource, MediaService } from '../src/media.js';
 
 function imageResponse(bytes: number, mimeType = 'image/png', headers: Record<string, string> = {}): Response {
   return new Response(new Uint8Array(bytes).fill(120), {
@@ -182,5 +182,36 @@ describe('MediaService', () => {
     const media = new MediaService(options(noFetch));
     await assert.rejects(() => media.fetchForPreview('ftp://example.com/x.png'), RequestError);
     await assert.rejects(() => media.save('ftp://example.com/x.png', { dir: '/tmp' }), RequestError);
+  });
+
+  it('fetchForPreview() rejects a non-image data: URI before reporting it too large', async () => {
+    const media = new MediaService(options(noFetch));
+    // ~1050 bytes (over the 1000-byte limit) but not an image: must error as
+    // not-an-image, not silently report tooLarge (MIME is checked before size).
+    const bigZip = `data:application/zip;base64,${'A'.repeat(1400)}`;
+    await assert.rejects(() => media.fetchForPreview(bigZip), RequestError);
+  });
+
+  it('fetchForPreview() rejects a corrupt base64 data: URI instead of decoding garbage', async () => {
+    const media = new MediaService(options(noFetch));
+    await assert.rejects(() => media.fetchForPreview('data:image/png;base64,not valid base64!!'), RequestError);
+  });
+});
+
+describe('describeSource', () => {
+  it('does not fabricate ;base64 for a plain (non-base64) data URI', () => {
+    const label = describeSource('data:text/plain,hello');
+    assert.ok(label.includes('text/plain'), label);
+    assert.ok(!label.includes('base64'), label);
+  });
+
+  it('reflects a base64 data URI without leaking the payload', () => {
+    const label = describeSource('data:image/png;base64,iVBORw0KGgo=');
+    assert.ok(label.includes('image/png;base64'), label);
+    assert.ok(!label.includes('iVBORw0KGgo'), label);
+  });
+
+  it('returns http(s) URLs unchanged', () => {
+    assert.equal(describeSource('https://cdn.example.com/a.png'), 'https://cdn.example.com/a.png');
   });
 });
