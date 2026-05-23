@@ -1,0 +1,40 @@
+name: Claude Review
+
+# Automated PR review by the Claude Code GitHub Action.
+# Requires a `CLAUDE_CODE_OAUTH_TOKEN` secret — generate it with `claude setup-token`
+# (Claude Pro/Max). Skips fork PRs, which can't access secrets.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Review this pull request as a senior engineer on a small, strict TypeScript
+            codebase. Prioritise, in order:
+            1. Correctness bugs, missing edge cases, and inadequate error handling.
+            2. Type-safety and security — this server handles a user API key; flag any
+               path that could log, leak, or mishandle it.
+            3. Whether new behaviour is covered by tests (node:test suites in test/).
+            4. Whether user-facing changes have a CHANGELOG.md [Unreleased] entry; if one
+               is missing, suggest the exact line to add.
+            Post specific, actionable inline comments on the relevant lines. Don't praise
+            or summarise obvious things. If the PR is solid, say so in one line.
+          claude_args: |
+            --max-turns 12
+            --model claude-sonnet-4-6
