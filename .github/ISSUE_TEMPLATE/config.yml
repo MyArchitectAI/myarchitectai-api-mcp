@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: MyArchitectAI account, billing & credits
+    url: https://www.myarchitectai.com
+    about: Questions about your account, credits, or billing — not MCP server bugs.
+  - name: Get or rotate an API key
+    url: https://portal.myarchitectai.com
+    about: Create or rotate your MyArchitectAI API key.
+  - name: Claude Code plugin
+    url: https://github.com/MyArchitectAI/myarchitectai-claude-plugin
+    about: Issues with the companion Claude Code plugin (compare skill + /render).

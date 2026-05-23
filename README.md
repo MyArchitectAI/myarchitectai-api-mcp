@@ -1,5 +1,6 @@
 # MyArchitectAI MCP server
 
+[![CI](https://github.com/MyArchitectAI/myarchitectai-api-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/MyArchitectAI/myarchitectai-api-mcp/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@myarchitectai/mcp)](https://www.npmjs.com/package/@myarchitectai/mcp)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
@@ -124,7 +125,9 @@ isolated in `src/config.ts` and the client's header injection.
 ## Contributing
 
 Contributions are welcome — please open an issue or PR. The published npm package is built from this
-repository.
+repository. See **[CONTRIBUTING.md](./CONTRIBUTING.md)** for the development and pull-request workflow,
+the **[Code of Conduct](./CODE_OF_CONDUCT.md)**, and the **[Security Policy](./SECURITY.md)** for
+reporting vulnerabilities privately.
 
 ```bash
 git clone https://github.com/MyArchitectAI/myarchitectai-api-mcp.git
