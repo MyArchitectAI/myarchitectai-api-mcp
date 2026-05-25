@@ -144,6 +144,9 @@ export class MediaService {
         });
       }
       mimeType = response.headers.get('content-type') ?? 'application/octet-stream';
+      if (!isImageMime(mimeType)) {
+        throw new RequestError(`URL did not return an image (content-type: ${mimeType}): ${rawInput}`);
+      }
       buffer = Buffer.from(new Uint8Array(await response.arrayBuffer()));
       nameHint = filenameFromUrl(rawInput);
     } else {
@@ -315,19 +318,19 @@ function decodeDataUri(raw: string): { bytes: Buffer; mimeType: string } {
 }
 
 /**
- * Decode a base64 data-URI payload, rejecting malformed input. `Buffer.from`
- * silently drops invalid characters and truncated groups, so a corrupt payload
- * would otherwise decode to wrong bytes with no error — we validate the charset
- * and require the bytes to round-trip back to the input.
+ * Decode a base64 data-URI payload, rejecting malformed input. Data-URI base64
+ * (RFC 2045) is canonical: the charset plus padding to a multiple of four — we
+ * require exactly that, then an exact round-trip. `Buffer.from` otherwise
+ * silently drops invalid characters and truncated groups, decoding a corrupt or
+ * truncated payload to the wrong bytes with no error surfaced.
  */
 function decodeBase64Strict(payload: string): Buffer {
   const normalized = payload.replace(/\s/g, '');
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
-    throw new RequestError('Invalid data: URI (base64 payload has invalid characters).');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
+    throw new RequestError('Invalid data: URI (base64 payload is malformed).');
   }
   const bytes = Buffer.from(normalized, 'base64');
-  const stripPad = (s: string): string => s.replace(/=+$/, '');
-  if (stripPad(bytes.toString('base64')) !== stripPad(normalized)) {
+  if (bytes.toString('base64') !== normalized) {
     throw new RequestError('Invalid data: URI (truncated or malformed base64 payload).');
   }
   return bytes;

@@ -196,6 +196,23 @@ describe('MediaService', () => {
     const media = new MediaService(options(noFetch));
     await assert.rejects(() => media.fetchForPreview('data:image/png;base64,not valid base64!!'), RequestError);
   });
+
+  it('fetchForPreview() rejects a truncated base64 data: URI (length not a multiple of 4)', async () => {
+    const media = new MediaService(options(noFetch));
+    await assert.rejects(() => media.fetchForPreview('data:image/png;base64,iVBORw0KGg'), RequestError);
+  });
+
+  it('save() refuses to write a non-image HTTP response', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
+    try {
+      const media = new MediaService(
+        options(async () => new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } })),
+      );
+      await assert.rejects(() => media.save('https://cdn.example.com/page.html', { dir }), RequestError);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('describeSource', () => {
