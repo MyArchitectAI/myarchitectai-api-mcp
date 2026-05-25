@@ -219,6 +219,13 @@ describe('MediaService', () => {
     }
   });
 
+  it('fetchForPreview() accepts an HTTP image served without a Content-Type (e.g. S3)', async () => {
+    // No content-type header — must not be rejected (consistent with save()).
+    const media = new MediaService(options(async () => new Response(new Uint8Array(40).fill(2), { status: 200 })));
+    const result = await media.fetchForPreview('https://bucket.s3.amazonaws.com/a.png');
+    assert.equal(result.tooLarge, false);
+  });
+
   it('save() accepts an HTTP image served without a Content-Type (e.g. S3)', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
     try {

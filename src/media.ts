@@ -114,8 +114,10 @@ export class MediaService {
     if (bytes.byteLength > this.#maxBytes) {
       return { tooLarge: true, bytes: bytes.byteLength, mimeType: contentType };
     }
-    if (!isImageMime(contentType)) {
-      throw new RequestError(`URL did not return an image (content-type: ${contentType ?? 'unknown'}): ${rawInput}`);
+    // Reject only an explicit non-image type — consistent with save(), which
+    // tolerates a missing Content-Type (common on S3/object storage).
+    if (contentType !== null && !isImageMime(contentType)) {
+      throw new RequestError(`URL did not return an image (content-type: ${contentType}): ${rawInput}`);
     }
     return {
       tooLarge: false,
