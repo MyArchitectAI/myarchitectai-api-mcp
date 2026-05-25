@@ -125,3 +125,13 @@ function parseBoundedInt(
   }
   return parsed;
 }
+
+/**
+ * A non-secret fingerprint of the API key for diagnostics — a leading ellipsis
+ * plus the last 4 characters. Enough to confirm *which* key is active (e.g.
+ * after a rotation, or when a paste mismatch causes 403s) without ever exposing
+ * the full secret.
+ */
+export function apiKeyFingerprint(apiKey: string): string {
+  return `…${apiKey.slice(-4)}`;
+}

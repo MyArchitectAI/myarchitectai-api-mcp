@@ -175,6 +175,17 @@ describe('MCP server integration', () => {
     await client.close();
   });
 
+  it('usage_summary exposes a masked api key fingerprint', async () => {
+    const client = await connect(buildServer(async () => new Response('{}')));
+
+    const result = await client.callTool({ name: 'usage_summary', arguments: {} });
+
+    const structured = result.structuredContent as { apiKeyFingerprint: string };
+    assert.equal(structured.apiKeyFingerprint, '…k'); // testConfig.apiKey === 'k'
+    assert.match(firstText(result.content), /API key: …k/);
+    await client.close();
+  });
+
   it('counts a failed generation and reflects its balance in usage_summary', async () => {
     const fetchImpl: FetchLike = async () =>
       new Response(JSON.stringify({ error: 'bad image', balance: 42, cost: 0 }), {
