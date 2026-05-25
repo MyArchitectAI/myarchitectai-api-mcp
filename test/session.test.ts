@@ -10,6 +10,7 @@ describe('SessionStore', () => {
     const store = new SessionStore();
     const summary = store.summary();
     assert.equal(summary.totalGenerations, 0);
+    assert.equal(summary.failedGenerations, 0);
     assert.equal(summary.totalCost, 0);
     assert.equal(summary.lastKnownBalance, null);
     assert.deepEqual(store.recent(), []);
@@ -57,5 +58,32 @@ describe('SessionStore', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('counts a failed generation and takes lastKnownBalance from the error', () => {
+    const store = new SessionStore();
+    store.recordFailure(42);
+    const summary = store.summary();
+    assert.equal(summary.failedGenerations, 1);
+    assert.equal(summary.totalGenerations, 0);
+    assert.equal(summary.lastKnownBalance, 42);
+  });
+
+  it('uses the most recent balance across successes and failures', async () => {
+    const store = new SessionStore();
+    await store.record({ tool: 't', output: ['a'], cost: 1, balance: 9 });
+    store.recordFailure(8); // a later call failed; the API reported balance 8
+    const summary = store.summary();
+    assert.equal(summary.lastKnownBalance, 8);
+    assert.equal(summary.totalGenerations, 1);
+    assert.equal(summary.failedGenerations, 1);
+  });
+
+  it('leaves lastKnownBalance unchanged when a failure reports no balance', async () => {
+    const store = new SessionStore();
+    await store.record({ tool: 't', output: ['a'], cost: 1, balance: 9 });
+    store.recordFailure();
+    assert.equal(store.summary().lastKnownBalance, 9);
+    assert.equal(store.summary().failedGenerations, 1);
   });
 });
