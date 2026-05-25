@@ -1,0 +1,91 @@
+name: Changeset
+
+# On each PR, Claude inspects the diff and writes/updates a per-PR changeset
+# (.changeset/pr-<number>.md) with the right semver bump — so contributors don't
+# have to remember, and we don't rely on commit-message conventions. The shipped
+# CHANGELOG is assembled later, at release time.
+#
+# Claude only edits the changeset FILE; a final step commits and pushes it with
+# the workflow's GITHUB_TOKEN. That matters: GitHub does not re-trigger workflows
+# for GITHUB_TOKEN pushes, so the changeset commit won't re-fire this workflow
+# (or the reviewer) on its own commit. Pushing as the Claude app bot did exactly
+# that, and the action refuses bot-initiated runs → failed checks.
+#
+# Same-repo PRs only (a workflow can't push to a fork) and skips the Changesets
+# "Version Packages" branch. Like all claude-code-action workflows, edits here
+# take effect only once merged to main.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write # commit the changeset to the PR branch
+  pull-requests: read
+  id-token: write # claude-code-action OIDC
+
+jobs:
+  changeset:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref != 'changeset-release/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            CHANGESET FILE: .changeset/pr-${{ github.event.pull_request.number }}.md
+
+            Run `gh pr diff` to see this PR's changes.
+
+            Decide whether the PR makes a USER-FACING change to the published npm
+            package @myarchitectai/mcp — runtime behaviour, the MCP tools, their
+            options/schemas, or the public API. NOT user-facing: tests, CI or
+            workflow files, the .changeset folder itself, internal refactors with
+            no behaviour change, dev tooling, or repo docs (README/CONTRIBUTING).
+
+            Edit ONLY the changeset file at the path above. Do NOT run git, commit,
+            or push — a later workflow step commits it for you.
+
+            - If it IS user-facing: write/update that file in EXACTLY this format
+              (keep the --- fences):
+
+              ---
+              "@myarchitectai/mcp": <patch|minor|major>
+              ---
+
+              <one or two sentence summary, written for users of the package>
+
+              Bump: a breaking change is "major"; a new feature, tool, or option
+              is "minor"; a bug fix is "patch". If the file already exists and is
+              still accurate, leave it unchanged.
+            - If it is NOT user-facing: if that file exists, delete it (`rm`);
+              otherwise do nothing.
+          claude_args: |
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(rm:*),Read,Write,Edit,Glob"
+            --max-turns 15
+            --model claude-sonnet-4-6
+      - name: Commit & push the changeset
+        # Push with GITHUB_TOKEN (github-actions[bot]) so the commit does NOT
+        # re-trigger this workflow or the reviewer on the bot's own commit.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$(git status --porcelain .changeset/)" ]; then
+            echo "No changeset change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A .changeset/
+          git commit -m "chore: changeset for #${{ github.event.pull_request.number }}"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push origin "HEAD:${{ github.head_ref }}"
