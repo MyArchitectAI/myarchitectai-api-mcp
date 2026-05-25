@@ -33,7 +33,7 @@ export const renderExteriorShape = {
   image: z
     .url()
     .describe(
-      'Public URL of the source image — a sketch, line drawing, 3D/CAD model screenshot, or photo. Must be reachable by MyArchitectAI.',
+      'URL of the source image — a sketch, line drawing, 3D/CAD model screenshot, or photo. Either a public HTTPS URL reachable by MyArchitectAI, or an inline data:image/<mime>;base64,<payload> URI for a local file.',
     ),
   outputFormat: imageFormat,
   prompt: prompt
@@ -45,7 +45,7 @@ export const renderInteriorShape = {
   image: z
     .url()
     .describe(
-      'Public URL of the source interior image — a sketch, line drawing, 3D/CAD model screenshot, or photo. Must be reachable by MyArchitectAI.',
+      'URL of the source interior image — a sketch, line drawing, 3D/CAD model screenshot, or photo. Either a public HTTPS URL reachable by MyArchitectAI, or an inline data:image/<mime>;base64,<payload> URI for a local file.',
     ),
   outputFormat: imageFormat,
   prompt: prompt
@@ -54,10 +54,16 @@ export const renderInteriorShape = {
 };
 
 export const styleTransferShape = {
-  image: z.url().describe('Public URL of the source architectural image to restyle.'),
+  image: z
+    .url()
+    .describe(
+      'URL of the source architectural image to restyle — a public HTTPS URL reachable by MyArchitectAI, or an inline data:image/<mime>;base64,<payload> URI for a local file.',
+    ),
   referenceImage: z
     .url()
-    .describe('Public URL of the style reference image whose look is transferred onto the source.'),
+    .describe(
+      'URL of the style reference image whose look is transferred onto the source — a public HTTPS URL reachable by MyArchitectAI, or an inline data:image/<mime>;base64,<payload> URI for a local file.',
+    ),
   outputFormat: imageFormat,
   prompt: prompt.optional().describe('Optional prompt to further guide the style transfer.'),
   negativePrompt: negativePrompt.optional(),
@@ -80,7 +86,9 @@ export const textToImageShape = {
 export const upscale4kShape = {
   image: z
     .url()
-    .describe('Public URL of the source image to upscale. Accepts inputs up to 2K; outputs up to 4K (or 8K).'),
+    .describe(
+      'URL of the source image to upscale — a public HTTPS URL reachable by MyArchitectAI, or an inline data:image/<mime>;base64,<payload> URI for a local file. Accepts inputs up to 2K; outputs up to 4K (or 8K).',
+    ),
   outputFormat: imageFormat.optional().describe('Output image format. Defaults to jpg if omitted.'),
 };
 
