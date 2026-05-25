@@ -1,0 +1,84 @@
+name: Changeset
+
+# On every PR, Claude inspects the diff and writes/updates a per-PR changeset
+# (.changeset/pr-<number>.md) describing the user-facing change and its semver
+# bump — so contributors don't have to remember to add one, and we don't rely on
+# commit-message conventions. The shipped CHANGELOG is assembled later, at
+# release time, by the Changesets "Version Packages" PR (changesets-release.yml).
+#
+# Same-repo PRs only: fork PRs can't receive a pushed commit and don't get
+# secrets, so for external contributions a maintainer adds the changeset (e.g.
+# `npm run changeset`) — or pulls the branch locally, where this workflow's
+# logic still applies. Skips the Changesets "Version Packages" branch.
+#
+# Note: like all claude-code-action workflows, this validates against the copy on
+# the default branch, so edits here only take effect once merged to main.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write # commit the changeset to the PR branch
+  pull-requests: read
+  id-token: write # claude-code-action OIDC
+
+jobs:
+  changeset:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref != 'changeset-release/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            CHANGESET FILE: .changeset/pr-${{ github.event.pull_request.number }}.md
+
+            Run `gh pr diff` to see this PR's changes, and `git status` before
+            committing so you only commit when something actually changed.
+
+            Decide whether the PR makes a USER-FACING change to the published npm
+            package @myarchitectai/mcp — runtime behaviour, the MCP tools, their
+            options/schemas, or the public API. NOT user-facing: tests, CI or
+            workflow files, the .changeset folder itself, internal refactors with
+            no behaviour change, dev tooling, or repo docs (README/CONTRIBUTING).
+
+            If it IS user-facing: ensure the changeset file at the path above
+            exists and accurately describes the change, in EXACTLY this format
+            (keep the --- fences):
+
+            ---
+            "@myarchitectai/mcp": <patch|minor|major>
+            ---
+
+            <one or two sentence summary, written for users of the package>
+
+            Choose the bump: a breaking change is "major"; a new feature, tool, or
+            option is "minor"; a bug fix is "patch". Create the file if missing, or
+            update it if the change has evolved since a previous run. If it already
+            exists and is still accurate, make NO commit. Otherwise commit ONLY
+            that file:
+              git add .changeset/pr-${{ github.event.pull_request.number }}.md
+              git commit -m "chore: changeset for #${{ github.event.pull_request.number }}"
+              git push
+
+            If the PR is NOT user-facing: if the changeset file exists, remove it
+            (git rm) and commit that removal; otherwise make no commit. Never
+            modify any file other than that one changeset.
+          claude_args: |
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git rm:*),Read,Write,Edit,Glob"
+            --max-turns 20
+            --model claude-sonnet-4-6
