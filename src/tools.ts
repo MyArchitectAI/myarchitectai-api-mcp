@@ -14,7 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Config } from './config.js';
 import type { GenerationResult, MyArchitectAIClient } from './client.js';
-import { MediaService, openInBrowser } from './media.js';
+import { classifyImageInput, describeSource, MediaService, openInBrowser, resolveLocalPath } from './media.js';
 import type { SessionStore } from './session.js';
 import { MyArchitectAIError } from './errors.js';
 import {
@@ -163,8 +163,9 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
     {
       title: 'Preview Image',
       description:
-        'Fetch an image by URL and return it inline so you (the agent) and GUI clients can actually see it — ' +
-        'useful for inspecting a generation result before continuing. Optionally also opens it in the default ' +
+        'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
+        'inspecting a generation result before continuing. Accepts a public HTTPS URL, an inline ' +
+        'data:image/<mime>;base64,<payload> URI, or a local file path. Optionally also opens it in the default ' +
         'browser when a display is available. Consumes no MyArchitectAI credits.',
       inputSchema: previewImageShape,
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -172,17 +173,30 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
     async ({ url, open }) => {
       try {
         const fetched = await deps.media.fetchForPreview(url);
-        const opened = open === true ? openInBrowser(url) : false;
-        const note = openNote(open === true, opened);
+        // A data: URI *is* the image, not a path/URL the OS can open — never hand
+        // megabytes of base64 to `open`/`xdg-open`, nor tell the user to open it.
+        const kind = classifyImageInput(url);
+        const isDataUri = kind === 'data';
+        // Resolve ~/relative/file:// inputs to an absolute path before the OS
+        // opener — `open`/`xdg-open` don't expand `~`.
+        const opened = open === true && !isDataUri
+          ? openInBrowser(kind === 'path' ? resolveLocalPath(url) : url)
+          : false;
+        const note = open === true && isDataUri
+          ? ' — inline data URI, nothing to open in a browser.'
+          : openNote(open === true, opened);
         if (fetched.tooLarge) {
+          const tail = isDataUri
+            ? ' The inline data URI is too large to display.'
+            : `\nOpen it directly:\n${describeSource(url)}`;
           return text(
             `Image is ${formatBytes(fetched.bytes)} — too large to embed inline ` +
-              `(limit ${formatBytes(deps.config.maxPreviewBytes)}). Open it directly:\n${url}${note}`,
+              `(limit ${formatBytes(deps.config.maxPreviewBytes)}).${tail}${note}`,
           );
         }
         return {
           content: [
-            { type: 'text', text: `Preview of ${url} (${formatBytes(fetched.bytes)}, ${fetched.mimeType})${note}` },
+            { type: 'text', text: `Preview of ${describeSource(url)} (${formatBytes(fetched.bytes)}, ${fetched.mimeType})${note}` },
             { type: 'image', data: fetched.base64, mimeType: fetched.mimeType },
           ],
         };
@@ -197,9 +211,10 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
     {
       title: 'Save Image',
       description:
-        'Download an image URL to local disk (defaults to the configured download directory) and return the ' +
-        'saved file path. Generation output URLs are public but may expire, so saving keeps a permanent copy. ' +
-        'Consumes no MyArchitectAI credits.',
+        'Save an image to local disk (defaults to the configured download directory) and return the saved file ' +
+        'path. Accepts a public HTTPS URL, an inline data:image/<mime>;base64,<payload> URI, or a local file ' +
+        'path. Generation output URLs are public but may expire, so saving keeps a permanent copy. Consumes no ' +
+        'MyArchitectAI credits.',
       inputSchema: saveImageShape,
       outputSchema: saveImageOutputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },

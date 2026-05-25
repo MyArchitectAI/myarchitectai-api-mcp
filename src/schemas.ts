@@ -94,7 +94,12 @@ export const generationOutputShape = {
 // --- QoL utility tools (no credits consumed) --------------------------------
 
 export const previewImageShape = {
-  url: z.url().describe('Public URL of the image to preview (e.g., a generation output URL).'),
+  url: z
+    .string()
+    .min(1)
+    .describe(
+      'Image to preview: a public HTTPS URL (e.g. a generation output), an inline data:image/<mime>;base64,<payload> URI, or a local file path (absolute, ~, or file://).',
+    ),
   open: z
     .boolean()
     .optional()
@@ -102,7 +107,12 @@ export const previewImageShape = {
 };
 
 export const saveImageShape = {
-  url: z.url().describe('Public URL of the image to download.'),
+  url: z
+    .string()
+    .min(1)
+    .describe(
+      'Image to save: a public HTTPS URL, an inline data:image/<mime>;base64,<payload> URI, or a local file path (absolute, ~, or file://).',
+    ),
   filename: z
     .string()
     .min(1)

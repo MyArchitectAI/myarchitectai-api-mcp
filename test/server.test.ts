@@ -213,4 +213,20 @@ describe('MCP server integration', () => {
     assert.equal(s.failedGenerations, 0);
     await client.close();
   });
+
+  it('preview_image accepts an inline base64 data: URI (no network)', async () => {
+    const dataUri =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const client = await connect(
+      buildServer(async () => {
+        throw new Error('network should not be used for a data: URI');
+      }),
+    );
+
+    const result = await client.callTool({ name: 'preview_image', arguments: { url: dataUri } });
+
+    const blocks = result.content as Array<{ type: string; data?: string }>;
+    assert.ok(blocks.some((b) => b.type === 'image' && typeof b.data === 'string'));
+    await client.close();
+  });
 });
