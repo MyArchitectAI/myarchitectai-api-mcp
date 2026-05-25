@@ -176,9 +176,15 @@ export const listRecentOutputShape = {
 };
 
 export const usageOutputShape = {
-  totalGenerations: z.number().describe('Number of generations recorded this session.'),
+  totalGenerations: z.number().describe('Number of successful generations recorded this session.'),
+  failedGenerations: z
+    .number()
+    .describe('Number of generations that failed with an API/validation error this session.'),
   totalCost: z.number().describe('Total credits spent this session.'),
-  lastKnownBalance: z.number().nullable().describe('Balance after the most recent generation, or null if none.'),
+  lastKnownBalance: z
+    .number()
+    .nullable()
+    .describe('Most recent balance reported by the API (from a successful or failed call), or null if none yet.'),
   byTool: z
     .record(z.string(), z.object({ count: z.number(), cost: z.number() }))
     .describe('Per-tool breakdown of count and cost.'),

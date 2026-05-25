@@ -175,6 +175,45 @@ describe('MCP server integration', () => {
     await client.close();
   });
 
+  it('counts a failed generation and reflects its balance in usage_summary', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ error: 'bad image', balance: 42, cost: 0 }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      });
+    const client = await connect(buildServer(fetchImpl));
+
+    const failed = await client.callTool({ name: 'upscale_4k', arguments: { image: 'https://x/y.png' } });
+    assert.equal(failed.isError, true);
+
+    const result = await client.callTool({ name: 'usage_summary', arguments: {} });
+    const s = result.structuredContent as {
+      totalGenerations: number;
+      failedGenerations: number;
+      lastKnownBalance: number;
+    };
+    assert.equal(s.totalGenerations, 0);
+    assert.equal(s.failedGenerations, 1);
+    assert.equal(s.lastKnownBalance, 42); // taken from the error body, with zero successes
+    await client.close();
+  });
+
+  it('does not count transport failures (network) as failed generations', async () => {
+    const fetchImpl: FetchLike = async () => {
+      throw new TypeError('fetch failed');
+    };
+    const client = await connect(buildServer(fetchImpl));
+
+    await client.callTool({
+      name: 'render_exterior',
+      arguments: { image: 'https://x/y.png', outputFormat: 'png' },
+    });
+    const result = await client.callTool({ name: 'usage_summary', arguments: {} });
+    const s = result.structuredContent as { failedGenerations: number };
+    assert.equal(s.failedGenerations, 0);
+    await client.close();
+  });
+
   it('preview_image accepts an inline base64 data: URI (no network)', async () => {
     const dataUri =
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
