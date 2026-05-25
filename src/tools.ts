@@ -14,7 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Config } from './config.js';
 import type { GenerationResult, MyArchitectAIClient } from './client.js';
-import { classifyImageInput, describeSource, MediaService, openInBrowser } from './media.js';
+import { classifyImageInput, describeSource, MediaService, openInBrowser, resolveLocalPath } from './media.js';
 import type { SessionStore } from './session.js';
 import { MyArchitectAIError } from './errors.js';
 import {
@@ -175,8 +175,13 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
         const fetched = await deps.media.fetchForPreview(url);
         // A data: URI *is* the image, not a path/URL the OS can open — never hand
         // megabytes of base64 to `open`/`xdg-open`, nor tell the user to open it.
-        const isDataUri = classifyImageInput(url) === 'data';
-        const opened = open === true && !isDataUri ? openInBrowser(url) : false;
+        const kind = classifyImageInput(url);
+        const isDataUri = kind === 'data';
+        // Resolve ~/relative/file:// inputs to an absolute path before the OS
+        // opener — `open`/`xdg-open` don't expand `~`.
+        const opened = open === true && !isDataUri
+          ? openInBrowser(kind === 'path' ? resolveLocalPath(url) : url)
+          : false;
         const note = open === true && isDataUri
           ? ' — inline data URI, nothing to open in a browser.'
           : openNote(open === true, opened);

@@ -143,10 +143,13 @@ export class MediaService {
           retryable: false,
         });
       }
-      mimeType = response.headers.get('content-type') ?? 'application/octet-stream';
-      if (!isImageMime(mimeType)) {
-        throw new RequestError(`URL did not return an image (content-type: ${mimeType}): ${rawInput}`);
+      // Reject only an explicit non-image type — many image hosts (e.g. S3)
+      // omit Content-Type entirely, and we shouldn't refuse those.
+      const ct = response.headers.get('content-type');
+      if (ct !== null && !isImageMime(ct)) {
+        throw new RequestError(`URL did not return an image (content-type: ${ct}): ${rawInput}`);
       }
+      mimeType = ct ?? 'application/octet-stream';
       buffer = Buffer.from(new Uint8Array(await response.arrayBuffer()));
       nameHint = filenameFromUrl(rawInput);
     } else {
@@ -278,7 +281,7 @@ function mimeFromPath(filePath: string): string {
 }
 
 /** Resolve a local input (absolute, relative, `~`, or `file://`) to an absolute path. */
-function resolveLocalPath(raw: string): string {
+export function resolveLocalPath(raw: string): string {
   if (/^file:\/\//i.test(raw)) {
     try {
       return fileURLToPath(raw);
@@ -326,8 +329,8 @@ function decodeDataUri(raw: string): { bytes: Buffer; mimeType: string } {
  */
 function decodeBase64Strict(payload: string): Buffer {
   const normalized = payload.replace(/\s/g, '');
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
-    throw new RequestError('Invalid data: URI (base64 payload is malformed).');
+  if (normalized === '' || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
+    throw new RequestError('Invalid data: URI (empty or malformed base64 payload).');
   }
   const bytes = Buffer.from(normalized, 'base64');
   if (bytes.toString('base64') !== normalized) {

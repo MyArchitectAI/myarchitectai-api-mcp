@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, it } from 'node:test';
 import type { FetchLike } from '../src/client.js';
 import { RequestError } from '../src/errors.js';
-import { assertSafeUrl, describeSource, MediaService } from '../src/media.js';
+import { assertSafeUrl, describeSource, MediaService, resolveLocalPath } from '../src/media.js';
 
 function imageResponse(bytes: number, mimeType = 'image/png', headers: Record<string, string> = {}): Response {
   return new Response(new Uint8Array(bytes).fill(120), {
@@ -202,6 +202,11 @@ describe('MediaService', () => {
     await assert.rejects(() => media.fetchForPreview('data:image/png;base64,iVBORw0KGg'), RequestError);
   });
 
+  it('fetchForPreview() rejects an empty base64 data: URI', async () => {
+    const media = new MediaService(options(noFetch));
+    await assert.rejects(() => media.fetchForPreview('data:image/png;base64,'), RequestError);
+  });
+
   it('save() refuses to write a non-image HTTP response', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
     try {
@@ -209,6 +214,19 @@ describe('MediaService', () => {
         options(async () => new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } })),
       );
       await assert.rejects(() => media.save('https://cdn.example.com/page.html', { dir }), RequestError);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('save() accepts an HTTP image served without a Content-Type (e.g. S3)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'mai-media-'));
+    try {
+      // 200 OK, real bytes, but no content-type header at all — must not be refused.
+      const media = new MediaService(options(async () => new Response(new Uint8Array(32).fill(1), { status: 200 })));
+      const saved = await media.save('https://bucket.s3.amazonaws.com/render.png', { dir });
+      assert.equal(saved.bytes, 32);
+      assert.ok(saved.path.endsWith('.png'));
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -230,5 +248,15 @@ describe('describeSource', () => {
 
   it('returns http(s) URLs unchanged', () => {
     assert.equal(describeSource('https://cdn.example.com/a.png'), 'https://cdn.example.com/a.png');
+  });
+});
+
+describe('resolveLocalPath', () => {
+  it('expands a leading ~ to an absolute path under the home directory', () => {
+    assert.equal(resolveLocalPath('~/Documents/render.png'), path.join(homedir(), 'Documents/render.png'));
+  });
+
+  it('rejects unsupported URL schemes', () => {
+    assert.throws(() => resolveLocalPath('ftp://example.com/x.png'), RequestError);
   });
 });
