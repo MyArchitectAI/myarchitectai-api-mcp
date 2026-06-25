@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a problem with the MyArchitectAI MCP server
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! A couple of notes first:
+        - **Never paste your full API key.** `usage_summary` reports a masked fingerprint (last 4 chars) that's enough to identify the key.
+        - For account, billing, or credit questions (not MCP bugs), use https://www.myarchitectai.com.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps — which tool you called, the arguments (redact any secrets), and the result.
+      placeholder: |
+        1. Call `render_interior` with image="https://…"
+        2. …
+        3. Observed: …
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: MCP host
+      description: Where are you running the server?
+      options:
+        - Claude Code
+        - Claude Desktop
+        - Cursor
+        - Windsurf
+        - VS Code
+        - Other (note in description)
+    validations:
+      required: true
+  - type: input
+    id: package-version
+    attributes:
+      label: Package version
+      description: "`npm view @myarchitectai/mcp version`, or the version you have installed."
+      placeholder: "0.1.2"
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      placeholder: "v20.11.0"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: Relevant stderr or error text. **Redact your API key.**
+      render: shell
+    validations:
+      required: false
