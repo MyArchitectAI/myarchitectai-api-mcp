@@ -118,13 +118,21 @@ export class MyArchitectAIClient {
 
     if (response.ok) {
       const result = asGenerationResult(parsed);
-      if (!result) {
-        throw new UpstreamError(
-          `Malformed success response from ${url}: ${truncate(raw)}`,
-          { status: response.status, retryable: false },
-        );
+      if (result) return result;
+
+      // Some endpoints return HTTP 200 with an ErrorResponse-shaped body
+      // ({ error, balance, cost }) — the spec says 400, but the live API does
+      // not always comply. Surface it as the same RequestError the 4xx path
+      // produces, rather than a confusing "malformed success response".
+      const errorBody = asErrorResponse(parsed);
+      if (errorBody) {
+        throw new RequestError(errorBody.error, errorBody.balance, errorBody.cost);
       }
-      return result;
+
+      throw new UpstreamError(
+        `Malformed success response from ${url}: ${truncate(raw)}`,
+        { status: response.status, retryable: false },
+      );
     }
 
     switch (response.status) {

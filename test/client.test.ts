@@ -163,4 +163,27 @@ describe('MyArchitectAIClient.generate', () => {
     await assert.rejects(() => client.generate('/render/exterior', {}), UpstreamError);
     assert.equal(count(), 1);
   });
+
+  it('surfaces an HTTP 200 ErrorResponse body as a non-retryable RequestError', async () => {
+    const { fetch, count } = stubFetch(() =>
+      jsonResponse(200, {
+        error: 'An error occurred. Please try again with different parameters or contact us',
+        balance: 100,
+        cost: 0,
+      }),
+    );
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    await assert.rejects(
+      () => client.generate('/render/interior', {}),
+      (err: unknown) => {
+        assert.ok(err instanceof RequestError);
+        assert.match(err.message, /An error occurred/);
+        assert.equal(err.balance, 100);
+        assert.equal(err.cost, 0);
+        assert.equal(err.retryable, false);
+        return true;
+      },
+    );
+    assert.equal(count(), 1); // not retried — it's a request-level rejection
+  });
 });

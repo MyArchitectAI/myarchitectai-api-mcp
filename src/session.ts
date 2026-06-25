@@ -21,6 +21,7 @@ export interface GenerationRecord {
 
 export interface UsageSummary {
   totalGenerations: number;
+  failedGenerations: number;
   totalCost: number;
   lastKnownBalance: number | null;
   byTool: Record<string, { count: number; cost: number }>;
@@ -30,6 +31,8 @@ export interface UsageSummary {
 export class SessionStore {
   #records: GenerationRecord[] = [];
   #seq = 0;
+  #failedGenerations = 0;
+  #lastKnownBalance: number | null = null;
   readonly #stateFile: string | undefined;
 
   constructor(stateFile?: string) {
@@ -44,6 +47,7 @@ export class SessionStore {
       if (Array.isArray(parsed)) {
         this.#records = parsed.filter(isRecord);
         this.#seq = this.#records.reduce((max, record) => Math.max(max, record.id), 0);
+        this.#lastKnownBalance = this.#records.at(-1)?.balance ?? null;
       }
     } catch {
       // No (or unreadable) prior state — start fresh.
@@ -60,8 +64,22 @@ export class SessionStore {
       balance: entry.balance,
     };
     this.#records.push(record);
+    this.#lastKnownBalance = record.balance;
     await this.#persist();
     return record;
+  }
+
+  /**
+   * Note a generation that failed at the API/validation level (not a transport
+   * error). Increments the failure count and, when the API reported a balance
+   * on the error, updates the last-known balance — so usage_summary stays
+   * informative even for a session with no successful generations.
+   */
+  recordFailure(balance?: number): void {
+    this.#failedGenerations += 1;
+    if (typeof balance === 'number') {
+      this.#lastKnownBalance = balance;
+    }
   }
 
   /** Most recent generations first. */
@@ -80,8 +98,9 @@ export class SessionStore {
     }
     return {
       totalGenerations: this.#records.length,
+      failedGenerations: this.#failedGenerations,
       totalCost,
-      lastKnownBalance: this.#records.at(-1)?.balance ?? null,
+      lastKnownBalance: this.#lastKnownBalance,
       byTool,
       since: this.#records[0]?.createdAt ?? null,
     };
