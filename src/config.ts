@@ -42,9 +42,9 @@ export interface Config {
   apiKey: string;
   /** API base URL, without a trailing slash. */
   baseUrl: string;
-  /** Per-request timeout in milliseconds. */
+  /** Total request budget in milliseconds, including retries and response body. */
   timeoutMs: number;
-  /** Maximum number of retries for transient failures (0 disables retries). */
+  /** Maximum safe retries inside the total request budget (0 disables retries). */
   maxRetries: number;
   /** Directory for `save_image` downloads (relative paths resolve from cwd). */
   downloadDir: string;

@@ -15,9 +15,10 @@ import { ConfigError } from './errors.js';
 import { MediaService } from './media.js';
 import { SessionStore } from './session.js';
 import { registerTools } from './tools.js';
+import { logEvent } from './logger.js';
 
 function log(message: string): void {
-  console.error(`[${SERVER_NAME}] ${message}`);
+  logEvent({ event: 'server_lifecycle', message });
 }
 
 async function main(): Promise<void> {

@@ -1,7 +1,7 @@
 {
   "name": "@myarchitectai/mcp",
   "version": "0.1.2",
-  "description": "Model Context Protocol (MCP) server for the MyArchitectAI rendering API — exterior/interior render, style transfer, text-to-image, and 4K upscaling.",
+  "description": "Model Context Protocol (MCP) server for the MyArchitectAI API \u2014 rendering, editing, textures, atmosphere, animation, prompts, 4K/8K upscaling and balance.",
   "type": "module",
   "license": "MIT",
   "author": "MyArchitectAI",
@@ -48,7 +48,10 @@
     "prepublishOnly": "npm run build",
     "changeset": "changeset",
     "changeset:version": "changeset version",
-    "release:tag": "git tag \"v$npm_package_version\" && git push origin \"v$npm_package_version\""
+    "release:tag": "git tag \"v$npm_package_version\" && git push origin \"v$npm_package_version\"",
+    "api:check": "node scripts/api-contract.mjs",
+    "api:check:live": "node scripts/api-contract.mjs --live",
+    "api:update": "node scripts/api-contract.mjs --update"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

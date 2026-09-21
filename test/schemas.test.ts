@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  changeTexturesSchema,
+  setAtmosphereSchema,
+  upscaleSchema,
   renderExteriorShape,
   renderInteriorShape,
   styleTransferShape,
@@ -35,4 +38,24 @@ describe('image input schemas accept HTTPS URLs and base64 data: URIs', () => {
       assert.equal(schema.safeParse('not a url').success, false);
     });
   }
+});
+
+
+describe('current input contract', () => {
+  it('allows prompts beyond the removed 2000-character cap', () => {
+    assert.equal(renderExteriorShape.prompt.safeParse('x'.repeat(3000)).success, true);
+  });
+  it('accepts reference texture mode and base64 masks', () => {
+    assert.equal(changeTexturesSchema.safeParse({ image: PNG_DATA_URI, mask: PNG_DATA_URI, referenceImage: PNG_DATA_URI }).success, true);
+  });
+  it('accepts interior lighting and individual exterior controls', () => {
+    assert.equal(setAtmosphereSchema.safeParse({ image: PNG_DATA_URI, sceneType: 'interior', lighting: 'warm_lamps' }).success, true);
+    for (const extra of [{ timeOfDay: 'golden_hour' }, { season: 'autumn' }, { weather: 'fog' }]) {
+      assert.equal(setAtmosphereSchema.safeParse({ image: PNG_DATA_URI, sceneType: 'exterior', ...extra }).success, true);
+    }
+  });
+  it('accepts PNG at 4K and upstream defaults without injecting optional fields', () => {
+    assert.equal(upscaleSchema.safeParse({ image: PNG_DATA_URI, targetResolution: '4k', outputFormat: 'png' }).success, true);
+    assert.deepEqual(upscaleSchema.parse({ image: PNG_DATA_URI }), { image: PNG_DATA_URI });
+  });
 });

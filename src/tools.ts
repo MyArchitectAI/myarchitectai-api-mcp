@@ -1,15 +1,14 @@
 /**
  * Registers all tools on an {@link McpServer}:
- *  - five generation tools mapped 1:1 to the MyArchitectAI API (each records
- *    its result to the session store), and
- *  - five QoL tools (preview, save, validate, usage, recent) that consume no
- *    credits.
+ *  - API operations mapped 1:1 to MyArchitectAI, with generation history, and
+ *  - five utilities (preview, save, validate, usage, recent) without API charges.
  *
  * Generation handlers forward their validated arguments (which map 1:1 to the
  * API's JSON body) to {@link MyArchitectAIClient.generate}; `JSON.stringify`
  * drops absent optional fields, so the validated args are sent as-is.
  */
 
+import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { apiKeyFingerprint, type Config } from './config.js';
@@ -18,6 +17,14 @@ import { classifyImageInput, describeSource, MediaService, openInBrowser, resolv
 import type { SessionStore } from './session.js';
 import { MyArchitectAIError } from './errors.js';
 import {
+  animateShape,
+  autoPromptShape,
+  autoPromptOutputShape,
+  balanceOutputShape,
+  changeTexturesSchema,
+  editByPromptShape,
+  setAtmosphereSchema,
+  upscaleSchema,
   generationOutputShape,
   listRecentOutputShape,
   listRecentShape,
@@ -41,15 +48,22 @@ export interface ToolDeps {
   config: Config;
 }
 
-const ENDPOINT = {
-  renderExterior: '/render/exterior',
-  renderInterior: '/render/interior',
-  styleTransfer: '/style-transfer',
-  textToImage: '/text-to-image',
-  upscale4k: '/upscale-4k',
+export const API_TOOL_ENDPOINTS = {
+  render_exterior: '/render/exterior',
+  render_interior: '/render/interior',
+  style_transfer: '/style-transfer',
+  text_to_image: '/text-to-image',
+  upscale_4k: '/upscale-4k',
+  auto_prompt: '/auto-prompt',
+  edit_by_prompt: '/edit-by-prompt',
+  change_textures: '/change-textures',
+  set_atmosphere: '/set-atmosphere',
+  animate: '/animate',
+  upscale: '/upscale',
+  balance: '/balance',
 } as const;
 
-/** Generation tools touch an external system, charge credits, and aren't idempotent. */
+/** Generation tools touch an external system, charge USD, and aren't idempotent. */
 const GENERATION_ANNOTATIONS = {
   readOnlyHint: false,
   destructiveHint: false,
@@ -58,17 +72,9 @@ const GENERATION_ANNOTATIONS = {
 } as const;
 
 const TOOL_NAMES = [
-  'render_exterior',
-  'render_interior',
-  'style_transfer',
-  'text_to_image',
-  'upscale_4k',
-  'preview_image',
-  'save_image',
-  'validate_image_url',
-  'usage_summary',
-  'list_recent_generations',
-] as const;
+  ...Object.keys(API_TOOL_ENDPOINTS),
+  'preview_image', 'save_image', 'validate_image_url', 'usage_summary', 'list_recent_generations',
+];
 
 export function registerTools(server: McpServer, deps: ToolDeps): string[] {
   registerGenerationTools(server, deps);
@@ -76,85 +82,80 @@ export function registerTools(server: McpServer, deps: ToolDeps): string[] {
   return [...TOOL_NAMES];
 }
 
+type GenerationTool = {
+  name: Exclude<keyof typeof API_TOOL_ENDPOINTS, 'auto_prompt' | 'balance'>;
+  title: string;
+  description: string;
+  inputSchema: z.ZodObject;
+};
+
 function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
-  server.registerTool(
-    'render_exterior',
-    {
-      title: 'Render Exterior',
-      description:
-        'Generate a photorealistic EXTERIOR architectural render from a source image (sketch, line drawing, ' +
-        '3D/CAD model screenshot, or photo provided as a public URL). Optionally steer the result with a text ' +
-        'prompt. Runs synchronously (typically under ~10s). Returns the generated image URL(s) plus the credit ' +
-        'cost and remaining balance.',
-      inputSchema: renderExteriorShape,
+  const tools: GenerationTool[] = [
+    { name: 'render_exterior', title: 'Render Exterior', inputSchema: z.object(renderExteriorShape),
+      description: 'Generate a photorealistic exterior render from a CAD export, sketch or photo. Optionally guide it with a prompt.' },
+    { name: 'render_interior', title: 'Render Interior', inputSchema: z.object(renderInteriorShape),
+      description: 'Generate a photorealistic interior render from a CAD export, sketch or photo. Optionally guide it with a prompt.' },
+    { name: 'style_transfer', title: 'Style Transfer', inputSchema: z.object(styleTransferShape),
+      description: 'Transfer a reference image style onto an architectural image, with optional prompt, negativePrompt and styleTransferStrength (0–1).' },
+    { name: 'text_to_image', title: 'Text to Image', inputSchema: z.object(textToImageShape),
+      description: 'Generate an architectural image from text. Choose width and height (128–2048 pixels) and png, jpg or webp format.' },
+    { name: 'upscale_4k', title: 'Upscale to 4K (legacy)', inputSchema: z.object(upscale4kShape),
+      description: 'Deprecated compatibility tool for 4K upscaling. Prefer upscale, which supports explicit 4k/8k targets. No avif output.' },
+    { name: 'edit_by_prompt', title: 'Edit by Prompt', inputSchema: z.object(editByPromptShape),
+      description: 'Edit an image with a natural-language instruction, optionally using an attached reference image.' },
+    { name: 'change_textures', title: 'Change Textures', inputSchema: changeTexturesSchema,
+      description: 'Retexture masked surfaces while preserving geometry. Mask white = change, black = keep. Provide exactly one of referenceImage or prompt.' },
+    { name: 'set_atmosphere', title: 'Set Atmosphere', inputSchema: setAtmosphereSchema,
+      description: 'Relight interiors or change exterior atmosphere. Interior requires lighting only. Exterior requires at least one of timeOfDay, season or weather and rejects lighting.' },
+    { name: 'animate', title: 'Animate Image', inputSchema: z.object(animateShape),
+      description: 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL; image preview/save utilities do not support videos. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.' },
+    { name: 'upscale', title: 'Upscale to 4K or 8K', inputSchema: upscaleSchema,
+      description: 'Upscale to 3840 (4k) or 7680 (8k) pixels on the longer side. Defaults to 4k and jpg. At 8k, only jpg or webp output is available.' },
+  ];
+  for (const tool of tools) {
+    server.registerTool(tool.name, {
+      title: tool.title,
+      description: `${tool.description} Image inputs accept public HTTPS URLs or image data URIs. Charges the API account; cost and balance are in USD.`,
+      inputSchema: tool.inputSchema,
       outputSchema: generationOutputShape,
       annotations: GENERATION_ANNOTATIONS,
-    },
-    async (args) => generate(deps, ENDPOINT.renderExterior, 'render_exterior', 'Exterior render', args),
-  );
+    }, async (args) => generate(deps, API_TOOL_ENDPOINTS[tool.name], tool.name, tool.title, args));
+  }
 
-  server.registerTool(
-    'render_interior',
-    {
-      title: 'Render Interior',
-      description:
-        'Generate a photorealistic INTERIOR architectural render from a source image (sketch, line drawing, ' +
-        '3D/CAD model screenshot, or photo provided as a public URL). Optionally steer the result with a text ' +
-        'prompt. Runs synchronously (typically under ~10s). Returns the generated image URL(s) plus the credit ' +
-        'cost and remaining balance.',
-      inputSchema: renderInteriorShape,
-      outputSchema: generationOutputShape,
-      annotations: GENERATION_ANNOTATIONS,
-    },
-    async (args) => generate(deps, ENDPOINT.renderInterior, 'render_interior', 'Interior render', args),
-  );
+  server.registerTool('auto_prompt', {
+    title: 'Auto Prompt',
+    description: 'Analyze an image and return a descriptive render prompt as plain text, not a URL. Charges the API account; cost and balance are in USD.',
+    inputSchema: autoPromptShape,
+    outputSchema: autoPromptOutputShape,
+    annotations: GENERATION_ANNOTATIONS,
+  }, async (args) => {
+    try {
+      const result = await deps.client.autoPrompt(args);
+      await deps.session.record({ tool: 'auto_prompt', ...result, output: [result.output], outputType: 'text' });
+      return {
+        content: [{ type: 'text', text: `${result.output}\n\nCost: $${formatNumber(result.cost)} USD · Balance: $${formatNumber(result.balance)} USD${requestIdNote(result.requestId)}` }],
+        structuredContent: { ...result },
+      };
+    } catch (err) {
+      recordFailure(deps, err);
+      return formatError('Auto prompt', err);
+    }
+  });
 
-  server.registerTool(
-    'style_transfer',
-    {
-      title: 'Style Transfer',
-      description:
-        'Transfer the visual style of a reference image onto a source architectural image. Provide `image` ' +
-        '(the source) and `referenceImage` (the look to copy) as public URLs, and control intensity with ' +
-        '`styleTransferStrength` (0–1). Optional `prompt`/`negativePrompt`. Returns the generated image URL(s) ' +
-        'plus the credit cost and remaining balance.',
-      inputSchema: styleTransferShape,
-      outputSchema: generationOutputShape,
-      annotations: GENERATION_ANNOTATIONS,
-    },
-    async (args) => generate(deps, ENDPOINT.styleTransfer, 'style_transfer', 'Style transfer', args),
-  );
-
-  server.registerTool(
-    'text_to_image',
-    {
-      title: 'Text to Image',
-      description:
-        'Generate an architectural image purely from a text `prompt` (no source image). Specify `outputWidth` ' +
-        'and `outputHeight` in pixels (128–2048) and `outputFormat` (png/jpg/webp — avif is not supported here). ' +
-        'Use `negativePrompt` to exclude unwanted elements. Returns the generated image URL(s) plus the credit ' +
-        'cost and remaining balance.',
-      inputSchema: textToImageShape,
-      outputSchema: generationOutputShape,
-      annotations: GENERATION_ANNOTATIONS,
-    },
-    async (args) => generate(deps, ENDPOINT.textToImage, 'text_to_image', 'Text-to-image', args),
-  );
-
-  server.registerTool(
-    'upscale_4k',
-    {
-      title: 'Upscale to 4K',
-      description:
-        'Upscale an existing image to higher resolution (up to 4K/8K) while preserving detail and sharpness. ' +
-        'Provide the source `image` URL (accepts inputs up to 2K). Optional `outputFormat` (defaults to jpg). ' +
-        'Returns the upscaled image URL(s) plus the credit cost and remaining balance.',
-      inputSchema: upscale4kShape,
-      outputSchema: generationOutputShape,
-      annotations: GENERATION_ANNOTATIONS,
-    },
-    async (args) => generate(deps, ENDPOINT.upscale4k, 'upscale_4k', 'Upscale to 4K', args),
-  );
+  server.registerTool('balance', {
+    title: 'Check Account Balance',
+    description: 'Fetch the current API account balance in USD without spending USD. Unlike usage_summary, this reads the live balance.',
+    inputSchema: {}, outputSchema: balanceOutputShape,
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
+  }, async () => {
+    try {
+      const result = await deps.client.balance();
+      deps.session.updateBalance(result.balance);
+      return { content: [{ type: 'text', text: `Account balance: $${formatNumber(result.balance)} USD` }], structuredContent: { ...result } };
+    } catch (err) {
+      return formatError('Balance check', err);
+    }
+  });
 }
 
 function registerQolTools(server: McpServer, deps: ToolDeps): void {
@@ -166,7 +167,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
         'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
         'inspecting a generation result before continuing. Accepts a public HTTPS URL, an inline ' +
         'data:image/<mime>;base64,<payload> URI, or a local file path. Optionally also opens it in the default ' +
-        'browser when a display is available. Consumes no MyArchitectAI credits.',
+        'browser when a display is available. Does not charge the API account.',
       inputSchema: previewImageShape,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -214,7 +215,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
         'Save an image to local disk (defaults to the configured download directory) and return the saved file ' +
         'path. Accepts a public HTTPS URL, an inline data:image/<mime>;base64,<payload> URI, or a local file ' +
         'path. Generation output URLs are public but may expire, so saving keeps a permanent copy. Consumes no ' +
-        'MyArchitectAI credits.',
+        'API balance.',
       inputSchema: saveImageShape,
       outputSchema: saveImageOutputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
@@ -241,7 +242,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       title: 'Validate Image URL',
       description:
         'HEAD-check that a URL is reachable and returns an image, before using it as a render input (which would ' +
-        'otherwise spend a credit on a request guaranteed to fail). Consumes no MyArchitectAI credits.',
+        'otherwise spend money on a request guaranteed to fail). Does not charge the API account.',
       inputSchema: validateImageUrlShape,
       outputSchema: validateUrlOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -275,8 +276,8 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
     {
       title: 'Usage Summary',
       description:
-        "Report this session's MyArchitectAI usage: number of generations, total credits spent, the last known " +
-        'balance (from the most recent generation — no paid call), and a per-tool breakdown. Consumes no credits.',
+        "Report this session's MyArchitectAI usage: number of generations, total USD spent, the last known " +
+        'balance (from the most recent generation — no paid call), and a per-tool breakdown. Does not charge the API account.',
       outputSchema: usageOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -287,11 +288,11 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
         `API key: ${fingerprint}`,
         `Generations this session: ${summary.totalGenerations}`,
         `Failed generations: ${summary.failedGenerations}`,
-        `Total cost: ${formatNumber(summary.totalCost)} credits`,
-        `Last known balance: ${summary.lastKnownBalance === null ? 'unknown (no generations yet)' : `${formatNumber(summary.lastKnownBalance)} credits`}`,
+        `Total cost: ${formatNumber(summary.totalCost)} USD`,
+        `Last known balance: ${summary.lastKnownBalance === null ? 'unknown (no generations yet)' : `${formatNumber(summary.lastKnownBalance)} USD`}`,
       ];
       for (const [tool, value] of Object.entries(summary.byTool)) {
-        lines.push(`  - ${tool}: ${value.count}× (${formatNumber(value.cost)} credits)`);
+        lines.push(`  - ${tool}: ${value.count}× (${formatNumber(value.cost)} USD)`);
       }
       return {
         content: [{ type: 'text', text: lines.join('\n') }],
@@ -314,7 +315,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       title: 'List Recent Generations',
       description:
         'List recent generations from this session (tool, time, output URLs, cost, balance) so you can re-preview ' +
-        'or save an earlier result without regenerating it — and without spending credits.',
+        'or reuse an earlier result without regenerating it — and without spending USD.',
       inputSchema: listRecentShape,
       outputSchema: listRecentOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -324,7 +325,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       const lines = generations.length
         ? generations.map(
             (record) =>
-              `#${record.id} ${record.tool} @ ${record.createdAt} — ${record.output.length} image(s), ` +
+              `#${record.id} ${record.tool} @ ${record.createdAt} — ${record.output.length} ${record.outputType ?? 'image'} result(s), ` +
               `cost ${formatNumber(record.cost)} — ${record.output.join(', ')}`,
           )
         : ['No generations recorded yet this session.'];
@@ -347,37 +348,48 @@ async function generate(
       output: result.output,
       cost: result.cost,
       balance: result.balance,
+      ...(result.requestId !== undefined ? { requestId: result.requestId } : {}),
+      outputType: toolName === 'animate' ? 'video' : 'image',
     });
-    return formatSuccess(label, result);
+    return formatSuccess(label, result, toolName === 'animate' ? 'video' : 'image');
   } catch (err) {
     // Count API/validation rejections (not transport errors) and capture any
     // balance the API reported on the failed call.
-    if (err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
-      deps.session.recordFailure(err.balance);
-    }
+    recordFailure(deps, err);
     return formatError(label, err);
   }
 }
 
-function formatSuccess(label: string, result: GenerationResult): CallToolResult {
+function recordFailure(deps: ToolDeps, err: unknown): void {
+  if (err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
+    deps.session.recordFailure(err.balance);
+  }
+}
+
+function requestIdNote(requestId: number | undefined): string {
+  return requestId === undefined ? '' : ` · Request ID: ${requestId}`;
+}
+
+function formatSuccess(label: string, result: GenerationResult, outputType: 'image' | 'video'): CallToolResult {
   const { output, balance, cost } = result;
   const count = output.length;
   const lines = [
-    `${label} complete — ${count} image${count === 1 ? '' : 's'} generated.`,
+    `${label} complete — ${count} ${outputType}${count === 1 ? '' : 's'} generated.`,
     '',
     ...output.map((url, index) => `${index + 1}. ${url}`),
     '',
-    `Cost: ${formatNumber(cost)} credits · Remaining balance: ${formatNumber(balance)} credits`,
+    `Cost: $${formatNumber(cost)} USD · Remaining balance: $${formatNumber(balance)} USD${requestIdNote(result.requestId)}`,
   ];
   return {
     content: [{ type: 'text', text: lines.join('\n') }],
-    structuredContent: { output, balance, cost },
+    structuredContent: { ...result },
   };
 }
 
 function formatError(label: string, err: unknown): CallToolResult {
   if (err instanceof MyArchitectAIError) {
     const meta: string[] = [];
+    if (err.requestId !== undefined) meta.push(`request ID ${err.requestId}`);
     if (err.status !== undefined) meta.push(`HTTP ${err.status}`);
     if (typeof err.balance === 'number') meta.push(`balance ${formatNumber(err.balance)}`);
     if (typeof err.cost === 'number') meta.push(`cost ${formatNumber(err.cost)}`);
@@ -399,7 +411,7 @@ function openNote(requested: boolean, opened: boolean): string {
   return opened ? ' — opened in browser.' : ' — no display detected, not opened.';
 }
 
-/** Render a credit amount without floating-point noise or trailing zeros. */
+/** Render a USD amount without floating-point noise or trailing zeros. */
 function formatNumber(value: number): string {
   if (Number.isInteger(value)) return value.toString();
   return (Math.round(value * 1e4) / 1e4).toString();

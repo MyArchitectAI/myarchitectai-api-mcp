@@ -52,13 +52,20 @@ describe('MCP server integration', () => {
     const client = await connect(buildServer(async () => new Response('{}')));
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((t) => t.name).sort(), [
+      'animate',
+      'auto_prompt',
+      'balance',
+      'change_textures',
+      'edit_by_prompt',
       'list_recent_generations',
       'preview_image',
       'render_exterior',
       'render_interior',
       'save_image',
+      'set_atmosphere',
       'style_transfer',
       'text_to_image',
+      'upscale',
       'upscale_4k',
       'usage_summary',
       'validate_image_url',
@@ -240,4 +247,91 @@ describe('MCP server integration', () => {
     assert.ok(blocks.some((b) => b.type === 'image' && typeof b.data === 'string'));
     await client.close();
   });
+});
+
+
+describe('current API tools', () => {
+  const cases = [
+    { name: 'auto_prompt', path: '/auto-prompt', args: { image: 'https://x/source.png' }, output: 'oak kitchen, natural daylight' },
+    { name: 'edit_by_prompt', path: '/edit-by-prompt', args: { image: 'https://x/source.png', prompt: 'replace the lamp', referenceImage: 'https://x/lamp.png' }, output: 'https://x/edited.png' },
+    { name: 'change_textures', path: '/change-textures', args: { image: 'https://x/source.png', mask: 'https://x/mask.png', prompt: 'oak' }, output: ['https://x/texture.png'] },
+    { name: 'set_atmosphere', path: '/set-atmosphere', args: { image: 'https://x/source.png', sceneType: 'exterior', season: 'winter', weather: 'snow' }, output: ['https://x/winter.png'] },
+    { name: 'animate', path: '/animate', args: { startFrameUrl: 'https://x/source.png', endFrameUrl: 'https://x/end.png', prompt: 'slow pan' }, output: 'https://x/animation.mp4' },
+    { name: 'upscale', path: '/upscale', args: { image: 'https://x/source.png', targetResolution: '8k', outputFormat: 'webp' }, output: 'https://x/8k.webp' },
+  ];
+  for (const fixture of cases) {
+    it(`${fixture.name} forwards its complete body and preserves response and history types`, async () => {
+      let calls = 0;
+      const client = await connect(buildServer(async (url, init) => {
+        calls++;
+        assert.equal(url, `https://api.test/v1${fixture.path}`);
+        assert.equal(init?.method, 'POST');
+        assert.deepEqual(JSON.parse(String(init?.body)), fixture.args);
+        return new Response(JSON.stringify({ output: fixture.output, balance: 4.97, cost: 0.03, requestId: 701 }));
+      }));
+      try {
+        const result = await client.callTool({ name: fixture.name, arguments: fixture.args });
+        assert.notEqual(result.isError, true);
+        const output = fixture.name === 'auto_prompt' || Array.isArray(fixture.output) ? fixture.output : [fixture.output];
+        assert.deepEqual(result.structuredContent, { output, balance: 4.97, cost: 0.03, requestId: 701 });
+        if (fixture.name === 'animate') assert.match(firstText(result.content), /video/);
+        const recent = await client.callTool({ name: 'list_recent_generations', arguments: {} });
+        const record = (recent.structuredContent as { generations: Array<{ requestId: number; outputType: string }> }).generations[0];
+        assert.equal(record?.requestId, 701);
+        let outputType = 'image';
+        if (fixture.name === 'auto_prompt') outputType = 'text';
+        if (fixture.name === 'animate') outputType = 'video';
+        assert.equal(record?.outputType, outputType);
+        assert.equal(calls, 1);
+      } finally {
+        await client.close();
+      }
+    });
+  }
+
+  it('balance performs an authenticated POST without a generation body or usage charge', async () => {
+    const client = await connect(buildServer(async (url, init) => {
+      assert.equal(url, 'https://api.test/v1/balance');
+      assert.equal(init?.method, 'POST');
+      assert.equal(init?.body, undefined);
+      assert.equal((init?.headers as Record<string, string>)['x-api-key'], 'k');
+      return new Response(JSON.stringify({ balance: 23.45 }));
+    }));
+    try {
+      const result = await client.callTool({ name: 'balance', arguments: {} });
+      assert.deepEqual(result.structuredContent, { balance: 23.45 });
+      const summary = await client.callTool({ name: 'usage_summary', arguments: {} });
+      const usage = summary.structuredContent as { totalGenerations: number; totalCost: number; lastKnownBalance: number };
+      assert.equal(usage.totalGenerations, 0);
+      assert.equal(usage.totalCost, 0);
+      assert.equal(usage.lastKnownBalance, 23.45);
+    } finally {
+      await client.close();
+    }
+  });
+
+  const invalid = [
+    { name: 'change_textures', args: { image: 'https://x/i.png', mask: 'https://x/m.png' } },
+    { name: 'change_textures', args: { image: 'https://x/i.png', mask: 'https://x/m.png', prompt: 'oak', referenceImage: 'https://x/r.png' } },
+    { name: 'change_textures', args: { image: 'https://x/i.png', prompt: 'oak' } },
+    { name: 'set_atmosphere', args: { image: 'https://x/i.png', sceneType: 'interior' } },
+    { name: 'set_atmosphere', args: { image: 'https://x/i.png', sceneType: 'interior', lighting: 'warm_lamps', weather: 'snow' } },
+    { name: 'set_atmosphere', args: { image: 'https://x/i.png', sceneType: 'exterior' } },
+    { name: 'set_atmosphere', args: { image: 'https://x/i.png', sceneType: 'exterior', lighting: 'warm_lamps', weather: 'snow' } },
+    { name: 'upscale', args: { image: 'https://x/i.png', targetResolution: '8k', outputFormat: 'png' } },
+    { name: 'upscale_4k', args: { image: 'https://x/i.png', outputFormat: 'avif' } },
+  ];
+  for (const [index, fixture] of invalid.entries()) {
+    it(`rejects invalid conditional input ${index + 1} before an API request`, async () => {
+      let calls = 0;
+      const client = await connect(buildServer(async () => { calls++; return new Response('{}'); }));
+      try {
+        const result = await client.callTool({ name: fixture.name, arguments: fixture.args });
+        assert.equal(result.isError, true);
+        assert.equal(calls, 0);
+      } finally {
+        await client.close();
+      }
+    });
+  }
 });

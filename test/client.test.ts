@@ -99,10 +99,10 @@ describe('MyArchitectAIClient.generate', () => {
     assert.equal(count(), 1);
   });
 
-  it('retries a transient 503 and then succeeds', async () => {
+  it('retries an explicitly uncharged 502 and then succeeds', async () => {
     const { fetch, count } = stubFetch((attempt) =>
       attempt === 0
-        ? jsonResponse(503, { message: 'unavailable' })
+        ? jsonResponse(502, { message: 'billing temporarily unreachable' })
         : jsonResponse(200, { output: ['ok'], balance: 1, cost: 0.1 }),
     );
     const client = new MyArchitectAIClient(baseConfig, fetch);
@@ -111,11 +111,11 @@ describe('MyArchitectAIClient.generate', () => {
     assert.equal(count(), 2);
   });
 
-  it('gives up with UpstreamError after exhausting retries on persistent 500', async () => {
+  it('does not replay paid requests after an uncertain 500', async () => {
     const { fetch, count } = stubFetch(() => jsonResponse(500, { message: 'boom' }));
     const client = new MyArchitectAIClient({ ...baseConfig, maxRetries: 1 }, fetch);
     await assert.rejects(() => client.generate('/render/interior', {}), UpstreamError);
-    assert.equal(count(), 2);
+    assert.equal(count(), 1);
   });
 
   it('honors Retry-After on 429 and retries', async () => {
@@ -129,14 +129,14 @@ describe('MyArchitectAIClient.generate', () => {
     assert.equal(count(), 2);
   });
 
-  it('wraps fetch failures as a retryable NetworkError', async () => {
+  it('does not replay a paid request after a transport failure', async () => {
     const { fetch, count } = stubFetch((attempt) => {
       if (attempt === 0) throw new TypeError('fetch failed');
       return jsonResponse(200, { output: [], balance: 1, cost: 0 });
     });
     const client = new MyArchitectAIClient(baseConfig, fetch);
-    await client.generate('/upscale-4k', {});
-    assert.equal(count(), 2);
+    await assert.rejects(() => client.generate('/upscale-4k', {}), NetworkError);
+    assert.equal(count(), 1);
   });
 
   it('maps an aborted request to a retryable TimeoutError', async () => {
@@ -185,5 +185,114 @@ describe('MyArchitectAIClient.generate', () => {
       },
     );
     assert.equal(count(), 1); // not retried — it's a request-level rejection
+  });
+});
+
+
+describe('current API response handling', () => {
+  it('keeps the timeout active while a streamed body is pending', async () => {
+    let bodyAborted = false;
+    const fetch: FetchLike = async (_url, init) => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(' '));
+        init?.signal?.addEventListener('abort', () => {
+          bodyAborted = true;
+          controller.error(new DOMException('Body aborted', 'AbortError'));
+        }, { once: true });
+      },
+    }));
+    const client = new MyArchitectAIClient({ ...baseConfig, timeoutMs: 15, maxRetries: 0 }, fetch);
+    await assert.rejects(() => client.generate('/animate', {}), TimeoutError);
+    assert.equal(bodyAborted, true);
+  });
+
+  it('retains a request ID on streamed failures, without retrying or inventing a balance', async () => {
+    const { fetch, count } = stubFetch(() => jsonResponse(200, { error: 'generation failed', requestId: 701 }));
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    await assert.rejects(() => client.autoPrompt({ image: 'https://x/i.png' }), (err: unknown) => {
+      assert.ok(err instanceof RequestError);
+      assert.equal(err.requestId, 701);
+      assert.equal(err.status, 200);
+      assert.equal(err.balance, undefined);
+      assert.equal(err.cost, undefined);
+      return true;
+    });
+    assert.equal(count(), 1);
+  });
+
+  it('reads the current error field in preference to the deprecated message', async () => {
+    const { fetch, count } = stubFetch(() => jsonResponse(403, { error: 'current error', message: 'old message' }));
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    await assert.rejects(() => client.balance(), { message: 'current error' });
+    assert.equal(count(), 1);
+  });
+
+  it('does not treat an error containing balance as a successful balance lookup', async () => {
+    const { fetch } = stubFetch(() => jsonResponse(200, { error: 'lookup failed', balance: 10 }));
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    await assert.rejects(() => client.balance(), RequestError);
+  });
+
+  it('explains a plain-text 413 without retrying', async () => {
+    const { fetch, count } = stubFetch(() => new Response('HTTP content length exceeded 10485760 bytes.', { status: 413 }));
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    await assert.rejects(() => client.generate('/render/interior', {}), (err: unknown) => {
+      assert.ok(err instanceof UpstreamError);
+      assert.equal(err.status, 413);
+      assert.equal(err.retryable, false);
+      assert.match(err.message, /10 MB/);
+      return true;
+    });
+    assert.equal(count(), 1);
+  });
+});
+
+
+describe('request budget and safe retries', () => {
+  it('bounds retry backoff inside the total request budget', async () => {
+    const { fetch, count } = stubFetch(() => jsonResponse(429, { error: 'slow down' }, { 'retry-after': '8' }));
+    const client = new MyArchitectAIClient({ ...baseConfig, timeoutMs: 30 }, fetch);
+    const start = performance.now();
+    await assert.rejects(() => client.generate('/render/exterior', {}), TimeoutError);
+    assert.ok(performance.now() - start < 300, 'must not wait the 8-second retry delay');
+    assert.equal(count(), 1);
+  });
+
+  it('does not replay auto-prompt when its paid outcome is unknown', async () => {
+    const { fetch, count } = stubFetch(() => { throw new TypeError('connection closed'); });
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    await assert.rejects(() => client.autoPrompt({ image: 'https://x/i.png' }), NetworkError);
+    assert.equal(count(), 1);
+  });
+
+  it('can retry a read-only balance lookup after a network failure', async () => {
+    const { fetch, count } = stubFetch((attempt) => {
+      if (attempt === 0) throw new TypeError('connection closed');
+      return jsonResponse(200, { balance: 12 });
+    });
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    assert.deepEqual(await client.balance(), { balance: 12 });
+    assert.equal(count(), 2);
+  });
+
+  it('gives subsequent attempts only the remaining response-body budget', async () => {
+    let calls = 0;
+    let firstSignal: AbortSignal | null | undefined;
+    const fetch: FetchLike = async (_url, init) => {
+      calls++;
+      if (calls === 1) {
+        firstSignal = init?.signal;
+        return jsonResponse(429, { error: 'slow down' }, { 'retry-after': '0' });
+      }
+      assert.equal(init?.signal, firstSignal, 'attempts must share one deadline signal');
+      return new Response(new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')), { once: true });
+        },
+      }));
+    };
+    const client = new MyArchitectAIClient({ ...baseConfig, timeoutMs: 30 }, fetch);
+    await assert.rejects(() => client.generate('/animate', {}), TimeoutError);
+    assert.equal(calls, 2);
   });
 });

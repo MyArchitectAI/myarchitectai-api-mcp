@@ -1,0 +1,13 @@
+# API contract maintenance
+
+The source is [the published OpenAPI document](https://portal.myarchitectai.com/openapi.json), rendered in [the API reference](https://portal.myarchitectai.com/docs). `spec/openapi.json` is the reviewed snapshot, retrieved on 2026-09-21. Runtime tools never depend on fetching it.
+
+Run `npm run build && npm run api:check` to compare the registered MCP tools with the snapshot. This verifies operation coverage, names, required fields, types, enums, declared limits, response fields and read-only annotations. Run `npm run api:check:live` to additionally compare the entire snapshot with the published contract. CI performs the live comparison on every PR and main push; its manual dispatch can check for changes between releases. It never calls a paid API operation.
+
+When the API changes, run `npm run api:update`, review the snapshot diff, update `src/schemas.ts`, `src/tools.ts`, response handling and affected tests, then run build, typecheck, lint, tests and both contract checks. New operations are never exposed automatically without review. Refreshing the snapshot alone does not update the implementation.
+
+MCP compatibility adaptations: image output strings normalize to arrays; `auto_prompt` preserves plain text and `balance` has a balance-only response. Request IDs are exposed when present but remain optional for older deployments and persisted history. Whole-pixel dimensions, URL validation and the 0–1 style-strength bound are retained as existing MCP input guards. The obsolete 2000-character prompt limit is removed. Conditional texture/atmosphere inputs are exposed as flat objects with server-side refinements; upstream documents their cross-field rules. Upscale rejects PNG at 8K and AVIF at either resolution.
+
+Paid operations retry only documented uncharged 429/502 responses; balance reads can retry transient errors. All attempts, backoff and response-body reads share one total timeout budget. Unknown paid outcomes are not replayed. Amounts are USD. History records text/video/image output types and request IDs; a balance lookup refreshes the last known balance without incrementing generation totals. `preview_image` and `save_image` support images only; use the returned animation URL in a video-capable client.
+
+API request diagnostics are structured JSON on stderr, with endpoint, status, outcome, duration and request ID when available. Logs exclude credentials, prompts, media and response bodies. This local stdio package has no production analytics or error-sink credentials: gate shut, nothing sends to Sentry or PostHog. No hosted service, OAuth flow or connector-directory submission is introduced by this API alignment.

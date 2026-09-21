@@ -6,12 +6,11 @@
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for the
 [MyArchitectAI](https://www.myarchitectai.com) rendering API. It gives MCP-compatible assistants
 (Claude Code, Claude Desktop, Cursor, …) tools to generate photorealistic architectural renders,
-transfer styles, create images from text, and upscale to 4K — plus quality-of-life tools to preview,
-save, and track results.
+edit images, change textures and atmosphere, animate renders, generate prompts, transfer styles, create images from text, and upscale to 4K/8K — plus tools to preview, save, and track results.
 
 ## Features
 
-**Generation tools** (consume credits):
+**API tools** (charged in USD, except `balance`):
 
 | Tool | What it does | Required | Optional |
 | --- | --- | --- | --- |
@@ -19,23 +18,30 @@ save, and track results.
 | `render_interior` | Photorealistic **interior** render | `image`, `outputFormat` | `prompt` |
 | `style_transfer` | Apply a reference image's style to a source image | `image`, `referenceImage`, `outputFormat` | `prompt`, `negativePrompt`, `styleTransferStrength` |
 | `text_to_image` | Generate an architectural image from text | `prompt`, `outputFormat`, `outputWidth`, `outputHeight` | `negativePrompt` |
-| `upscale_4k` | Upscale an image up to 4K/8K | `image` | `outputFormat` |
+| `auto_prompt` | Describe an image as a render prompt (plain text) | `image` | — |
+| `edit_by_prompt` | Apply an edit instruction | `image`, `prompt` | `referenceImage` |
+| `change_textures` | Retexture masked surfaces | `image`, `mask`, exactly one of `prompt` / `referenceImage` | — |
+| `set_atmosphere` | Change interior lighting or exterior atmosphere | `image`, `sceneType`; interior: `lighting`; exterior: at least one of `timeOfDay` / `season` / `weather` | Additional exterior controls |
+| `animate` | Animate a frame or transition between frames (video URL) | `startFrameUrl`, `prompt` | `endFrameUrl` |
+| `upscale` | Upscale to 4K or 8K | `image` | `targetResolution`, `outputFormat` |
+| `upscale_4k` | Legacy 4K endpoint; prefer `upscale` | `image` | `outputFormat` |
+| `balance` | Read the current account balance without a charge | — | — |
 
-**Quality-of-life tools** (no credits consumed):
+**Quality-of-life tools** (no API charge):
 
 | Tool | What it does |
 | --- | --- |
 | `preview_image` | Fetch a URL and return the image **inline**, so the assistant (and GUI clients) can see it |
 | `save_image` | Download an image URL to disk |
-| `validate_image_url` | Check an input URL is a reachable image *before* spending a credit |
-| `usage_summary` | Session totals: generations, credits spent, last-known balance |
-| `list_recent_generations` | Recent results (URLs, cost, balance) to reuse without regenerating |
+| `validate_image_url` | Check an input URL is a reachable image *before* a paid generation |
+| `usage_summary` | Session totals: requests, USD spent, last-known balance |
+| `list_recent_generations` | Recent image/video/text results, cost, balance and request IDs |
 
-Image inputs accept either a **public HTTPS URL** reachable by MyArchitectAI, or an inline
-**`data:image/<mime>;base64,<payload>`** URI for local files. `outputFormat` is one of
-`webp`/`jpg`/`png`/`avif` (text-to-image: `png`/`jpg`/`webp`). Dimensions range 128–2048px.
-Generation is synchronous (typically under ~10s) and returns the image URL(s) plus the credit cost
-and remaining balance.
+Image inputs accept a public HTTPS URL reachable by MyArchitectAI or an inline `data:image/<mime>;base64,<payload>` URI. Output formats are endpoint-specific: upscale accepts `jpg`/`webp`/`png`, but PNG is unavailable at 8K and AVIF is unsupported. Text-to-image dimensions are 128–2048px. Requests have a 10 MB body limit; prefer URLs for large inputs.
+
+The API responds synchronously, streaming while it works. Animation typically takes 60–90 seconds; configure your MCP host's tool timeout to accommodate it. Image utilities do not preview or download videos; open the returned animation URL in a video-capable client.
+
+The server exposes **17 tools**, covering all **12 API operations** in the [published API reference](https://portal.myarchitectai.com/docs). [API contract maintenance](docs/API-CONTRACT.md) describes the snapshot and automated drift checks.
 
 ## Install
 
@@ -98,8 +104,8 @@ docker run -i -e MYARCHITECTAI_API_KEY=your-api-key myarchitectai-mcp
 | --- | --- | --- | --- |
 | `MYARCHITECTAI_API_KEY` | **yes** | — | Your API key (sent as `x-api-key`). |
 | `MYARCHITECTAI_BASE_URL` | no | `https://api.myarchitectai.com/v1` | Override the API base URL. |
-| `MYARCHITECTAI_TIMEOUT_MS` | no | `120000` | Per-request timeout in ms (1000–600000). |
-| `MYARCHITECTAI_MAX_RETRIES` | no | `2` | Retries for transient failures, 0 disables (0–10). |
+| `MYARCHITECTAI_TIMEOUT_MS` | no | `120000` | Total call timeout including retries, backoff and body in ms (1000–600000). |
+| `MYARCHITECTAI_MAX_RETRIES` | no | `2` | Safe retries inside the total timeout, 0 disables (0–10). |
 | `MYARCHITECTAI_DOWNLOAD_DIR` | no | `renders` | Directory `save_image` writes to. |
 | `MYARCHITECTAI_MAX_PREVIEW_BYTES` | no | `5000000` | Max bytes `preview_image` embeds inline before falling back to a URL. |
 | `MYARCHITECTAI_STATE_FILE` | no | — | Optional path to persist generation history across restarts. |
@@ -107,11 +113,23 @@ docker run -i -e MYARCHITECTAI_API_KEY=your-api-key myarchitectai-mcp
 ## Behavior
 
 - **Success** → a text summary listing the generated image URL(s), cost, and balance, plus
-  `structuredContent` of the shape `{ output: string[], balance: number, cost: number }`.
+  `structuredContent` of the shape `{ output: string[], balance: number, cost: number, requestId?: number }`. `auto_prompt` returns `output: string` containing text; `balance` returns only `{ balance }`. Amounts are USD. Request IDs are preserved for support.
 - **API/validation errors** (bad input, invalid key, rate limits, server errors) are returned as
   tool results with `isError: true` and a clear message — the server does not crash.
-- **Transient failures** (HTTP 408/425/429/5xx, network errors, timeouts) are retried automatically
-  with exponential backoff + jitter, honoring `Retry-After`. Client errors (400/401/403) are not retried.
+- **Safe retries**: paid operations retry only HTTP 429 and 502 responses, which the API explicitly guarantees were not charged. Unknown outcomes (network errors, timeouts and other 5xx responses) are never automatically replayed. Read-only balance lookups can retry transient failures. Backoff, every attempt and response-body consumption share one `MYARCHITECTAI_TIMEOUT_MS` budget. Inspect the API request log before manually retrying an uncertain paid call.
+
+API diagnostics are JSON lines on stderr; stdout remains the MCP protocol channel. Logs include endpoint, status, outcome, duration and request ID without prompts, media, keys or response bodies. No production analytics or error telemetry is sent.
+
+## Keeping the API current
+
+```bash
+npm run build
+npm run api:check        # registered tools against the reviewed snapshot
+npm run api:check:live   # also compare with the current published OpenAPI
+npm run api:update      # refresh snapshot; then align code and tests
+```
+
+CI checks the live contract on PRs, main pushes and manual dispatch. A spec change fails the check and requires review; runtime capabilities never change silently.
 
 ## Authentication
 

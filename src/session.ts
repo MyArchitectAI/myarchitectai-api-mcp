@@ -17,6 +17,8 @@ export interface GenerationRecord {
   output: string[];
   cost: number;
   balance: number;
+  requestId?: number;
+  outputType?: 'image' | 'video' | 'text';
 }
 
 export interface UsageSummary {
@@ -54,7 +56,7 @@ export class SessionStore {
     }
   }
 
-  async record(entry: { tool: string; output: string[]; cost: number; balance: number }): Promise<GenerationRecord> {
+  async record(entry: Omit<GenerationRecord, 'id' | 'createdAt'>): Promise<GenerationRecord> {
     const record: GenerationRecord = {
       id: ++this.#seq,
       tool: entry.tool,
@@ -62,6 +64,8 @@ export class SessionStore {
       output: entry.output,
       cost: entry.cost,
       balance: entry.balance,
+      ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}),
+      ...(entry.outputType !== undefined ? { outputType: entry.outputType } : {}),
     };
     this.#records.push(record);
     this.#lastKnownBalance = record.balance;
@@ -80,6 +84,10 @@ export class SessionStore {
     if (typeof balance === 'number') {
       this.#lastKnownBalance = balance;
     }
+  }
+
+  updateBalance(balance: number): void {
+    this.#lastKnownBalance = balance;
   }
 
   /** Most recent generations first. */

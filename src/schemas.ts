@@ -10,8 +10,6 @@
 
 import { z } from 'zod';
 
-const PROMPT_MAX = 2000;
-
 const imageFormat = z
   .enum(['webp', 'jpg', 'png', 'avif'])
   .describe('Output image format: webp, jpg, png, or avif.');
@@ -20,11 +18,9 @@ const textToImageFormat = z
   .enum(['png', 'jpg', 'webp'])
   .describe('Output image format: png, jpg, or webp (avif is not supported for text-to-image).');
 
-const prompt = z.string().min(1).max(PROMPT_MAX);
+const prompt = z.string();
 const negativePrompt = z
   .string()
-  .min(1)
-  .max(PROMPT_MAX)
   .describe('Optional text describing elements to exclude from the output.');
 
 // --- Generation tools (1:1 with the API) -----------------------------------
@@ -87,16 +83,77 @@ export const upscale4kShape = {
   image: z
     .url()
     .describe(
-      'URL of the source image to upscale — a public HTTPS URL reachable by MyArchitectAI, or an inline data:image/<mime>;base64,<payload> URI for a local file. Accepts inputs up to 2K; outputs up to 4K (or 8K).',
+      'Source image to upscale to 4K: a public HTTPS URL or an inline data:image/<mime>;base64,<payload> URI.',
     ),
-  outputFormat: imageFormat.optional().describe('Output image format. Defaults to jpg if omitted.'),
+  outputFormat: textToImageFormat.optional().describe('Output image format. Defaults to jpg if omitted.'),
+};
+
+export const upscaleShape = {
+  ...upscale4kShape,
+  targetResolution: z.enum(['4k', '8k']).optional().describe('Resolution on the longer side; defaults to 4k. At 8k use jpg or webp, not png.'),
+};
+
+export const upscaleSchema = z.object(upscaleShape).refine(
+  (args) => args.targetResolution !== '8k' || args.outputFormat !== 'png',
+  { message: 'PNG output is unavailable at 8K. Use jpg or webp.', path: ['outputFormat'] },
+);
+
+export const autoPromptShape = { image: renderExteriorShape.image };
+
+export const editByPromptShape = {
+  image: renderExteriorShape.image,
+  prompt: prompt.describe('Natural-language instruction describing the edit.'),
+  referenceImage: styleTransferShape.referenceImage.optional().describe('Optional reference image URL or image data URI. Refer to it as "attached image" in the prompt.'),
+};
+
+export const changeTexturesSchema = z.object({
+  image: renderExteriorShape.image,
+  mask: z.string().min(1).describe('Mask URL or base64 image: white marks surfaces to change; black preserves them.'),
+  referenceImage: styleTransferShape.referenceImage.optional(),
+  prompt: prompt.optional().describe('Desired texture; provide exactly one of prompt or referenceImage.'),
+}).refine(
+  (args) => (args.prompt !== undefined) !== (args.referenceImage !== undefined),
+  { message: 'Provide exactly one of prompt or referenceImage.' },
+);
+
+export const setAtmosphereSchema = z.object({
+  image: renderExteriorShape.image,
+  sceneType: z.enum(['interior', 'exterior']),
+  lighting: z.enum(['midday_light', 'golden_light', 'blue_hour_light', 'ambient_light', 'warm_lamps', 'dimmed_mood']).optional().describe('Required for interior scenes; do not send exterior fields.'),
+  timeOfDay: z.enum(['early_morning', 'midday', 'overcast_day', 'golden_hour', 'sunset', 'blue_hour', 'night', 'starry_night', 'northern_lights', 'southern_lights']).optional(),
+  season: z.enum(['spring', 'summer', 'autumn', 'winter']).optional(),
+  weather: z.enum(['clear', 'overcast', 'rain', 'fog', 'snow']).optional(),
+}).superRefine((args, ctx) => {
+  const hasExterior = args.timeOfDay !== undefined || args.season !== undefined || args.weather !== undefined;
+  if (args.sceneType === 'interior' && (args.lighting === undefined || hasExterior)) {
+    ctx.addIssue({ code: 'custom', message: 'Interior mode requires lighting and rejects timeOfDay, season and weather.' });
+  }
+  if (args.sceneType === 'exterior' && (!hasExterior || args.lighting !== undefined)) {
+    ctx.addIssue({ code: 'custom', message: 'Exterior mode requires timeOfDay, season or weather and rejects lighting.' });
+  }
+});
+
+export const animateShape = {
+  startFrameUrl: renderExteriorShape.image,
+  prompt: prompt.describe('Camera motion or transition to animate.'),
+  endFrameUrl: renderExteriorShape.image.optional().describe('Optional end frame URL or image data URI for a transition.'),
 };
 
 /** Shared structured-output schema returned by every generation tool. */
 export const generationOutputShape = {
-  output: z.array(z.string()).describe('URLs of the generated image(s).'),
-  balance: z.number().describe('Remaining account credit balance after this request.'),
-  cost: z.number().describe('Credits charged for this request.'),
+  output: z.array(z.string()).describe('URLs of generated images, or a video URL for animate.'),
+  balance: z.number().describe('Remaining account balance in USD after this request.'),
+  cost: z.number().describe('Cost charged in USD for this request.'),
+  requestId: z.number().int().optional().describe('API request ID for support and request-log lookup.'),
+};
+
+export const autoPromptOutputShape = {
+  ...generationOutputShape,
+  output: z.string().describe('Generated render prompt as plain text, not a URL.'),
+};
+
+export const balanceOutputShape = {
+  balance: z.number().describe('Current account balance in USD.'),
 };
 
 // --- QoL utility tools (no credits consumed) --------------------------------
@@ -169,6 +226,8 @@ const generationRecordSchema = z.object({
   output: z.array(z.string()),
   cost: z.number(),
   balance: z.number(),
+  requestId: z.number().int().optional(),
+  outputType: z.enum(['image', 'video', 'text']).optional(),
 });
 
 export const listRecentOutputShape = {
@@ -180,7 +239,7 @@ export const usageOutputShape = {
   failedGenerations: z
     .number()
     .describe('Number of generations that failed with an API/validation error this session.'),
-  totalCost: z.number().describe('Total credits spent this session.'),
+  totalCost: z.number().describe('Total USD spent this session.'),
   lastKnownBalance: z
     .number()
     .nullable()

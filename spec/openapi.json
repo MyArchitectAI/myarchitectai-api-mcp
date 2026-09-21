@@ -1,0 +1,1404 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "MyArchitectAI API",
+    "description": "AI rendering API for architecture and interior design. Create photorealistic renderings, transfer styles between images, edit images with natural language, upscale images up to 8K, turn static renders into animations, and more. Rendering images in 13s, editing images in 1-3s, animating renders in 60-90s. Best practices [here](https://www.myarchitectai.com/rendering-tutorials).\n\n## Rate limits\n\nEach API key is limited to **5 requests per second** with a burst allowance of **20 requests**. Requests over the limit are rejected with HTTP `429` and the body `{\"error\":\"Too Many Requests\"}`. Rejected requests are never charged.\n\nBuild a fallback into your integration: on a `429`, retry with exponential backoff and jitter (e.g. wait 1s, then 2s, 4s, up to a few attempts) instead of failing or retrying immediately.\n\n## Error handling\n\n**Check the response body, not just the status code.** Generation endpoints run behind a streamed response so the connection stays open for long jobs, which means the HTTP status is committed before the job finishes. A job that fails *during* generation therefore still returns `200`, with an error body instead of a result.\n\nTreat a `200` as successful only if the body contains an `output` key. If it contains an `error` key the request failed and the charge was refunded \u2014 `cost` is `0` and `balance` reflects the refund. Always include `requestId` when contacting support.\n\nFailures that happen *before* generation starts (authentication, insufficient funds, rate limits) are returned with their real status codes and never reach the streamed path.\n\n## Request size\n\nRequest bodies are capped at **10 MB**. Oversized requests are rejected with HTTP `413` and a **plain-text** body (`HTTP content length exceeded 10485760 bytes.`) \u2014 this one is not JSON and carries neither `error` nor `message`, because it is rejected before the JSON error shape is applied. Base64-encoding inflates an image by roughly 33%, so prefer passing a URL over inline base64 for large sources.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "MyArchitectAI",
+      "url": "https://www.myarchitectai.com"
+    },
+    "termsOfService": "https://www.myarchitectai.com/terms-and-conditions"
+  },
+  "servers": [
+    {
+      "url": "https://api.myarchitectai.com/v1"
+    }
+  ],
+  "paths": {
+    "/render/interior": {
+      "post": {
+        "summary": "Render Interior",
+        "description": "Generate a photorealistic interior render from a 3D view export from any CAD or 3D modeling tool. Optionally guide the output with a text prompt.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderInteriorInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ArrayGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/render/exterior": {
+      "post": {
+        "summary": "Render Exterior",
+        "description": "Generate a photorealistic exterior render from a 3D view export from any CAD or 3D modeling tool. Optionally guide the output with a text prompt.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ArrayGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/auto-prompt": {
+      "post": {
+        "summary": "Auto Prompt",
+        "description": "Analyze the input image and generate a detailed, comma-separated prompt describing its every aspect. Returns the generated prompt as text in output (not a URL). We highly recommend using it for pre-filling the prompt field of the render endpoints.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoPromptInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AutoPromptResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/edit-by-prompt": {
+      "post": {
+        "summary": "Edit by Prompt",
+        "description": "Edit an existing image with a natural-language instruction. The model applies the requested change while matching the input's aspect ratio. Returns the edited image URL.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditByPromptInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SingleGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/change-textures": {
+      "post": {
+        "summary": "Change Textures",
+        "description": "Change the surface textures and materials of the masked area of an image while keeping its geometry and layout. Requires a `mask` marking the surfaces to retexture (white = change, black = keep; URL or base64). Choose exactly one of two modes: pass a `referenceImage` of the desired texture, or describe the texture with a `prompt` \u2014 providing both is rejected. Returns the resulting image URL as the only element of the output array.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeTexturesInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ArrayGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/set-atmosphere": {
+      "post": {
+        "summary": "Set Atmosphere",
+        "description": "Change the atmosphere of an image \u2014 relight an interior or change the time of day, season, or weather of an exterior \u2014 while keeping its geometry and materials. Set `sceneType` to choose the mode: `interior` requires a `lighting` value; `exterior` requires at least one of `timeOfDay`, `season`, or `weather` (any combination). Fields from the other mode are rejected. Returns the resulting image URL as the first element of the output array.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetAtmosphereInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ArrayGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/style-transfer": {
+      "post": {
+        "summary": "Style Transfer",
+        "description": "Transfer the visual style of a reference image onto a source architectural image. Control the strength of the effect with the styleTransferStrength parameter.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StyleTransferInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ArrayGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/animate": {
+      "post": {
+        "summary": "Animate Image",
+        "description": "Turn a single image into a short video or create a smooth transition between two images. Use the prompt to describe the camera motion. Returns a video URL in output.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnimateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SingleGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/upscale": {
+      "post": {
+        "summary": "Upscale to 4K or 8K",
+        "description": "Upscale an image while preserving details and sharpness. Outputs 3840 (4K, default) or 7680 (8K) pixels on the longer side, controlled by the `targetResolution` parameter. Note: `outputFormat: png` is not available at `8k` (the output file would exceed storage size limits) — use `webp` or `jpg` for 8K, or `png` at `4k`.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpscaleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SingleGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/upscale-4k": {
+      "post": {
+        "summary": "Upscale to 4K (deprecated)",
+        "deprecated": true,
+        "description": "**Deprecated** — use `POST /upscale` instead, which supports both 4K and 8K via the `targetResolution` parameter (`/upscale` with no `targetResolution` behaves identically to this endpoint). This endpoint remains functional but will not receive updates. Upscale an image to 4K resolution while preserving details and sharpness.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Upscale4kInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SingleGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/text-to-image": {
+      "post": {
+        "summary": "Text to Image",
+        "description": "Generate an architectural image from a text description. Specify output dimensions (128-2048px) and format. Use negativePrompt to exclude unwanted elements.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextToImageInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SingleGenerationResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/balance": {
+      "post": {
+        "summary": "Check Balance",
+        "description": "Return the current account balance for the API key. Use this to check your remaining balance without running \u2014 and paying for \u2014 a generation. Takes no request body.",
+        "responses": {
+          "200": {
+            "description": "Current account balance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BalanceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "api_key": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RenderInteriorInput": {
+        "required": [
+          "image",
+          "outputFormat"
+        ],
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Source image (sketch, drawing, or photo). Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "outputFormat": {
+            "type": "string",
+            "enum": [
+              "webp",
+              "jpg",
+              "png",
+              "avif"
+            ],
+            "description": "Output image format"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Text prompt to guide the interior render style and elements"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error",
+          "balance",
+          "cost",
+          "requestId"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error message describing what went wrong"
+          },
+          "balance": {
+            "type": "number",
+            "description": "Remaining account balance"
+          },
+          "cost": {
+            "type": "number",
+            "description": "Cost charged for this request (typically 0 on error)"
+          },
+          "requestId": {
+            "type": "integer",
+            "description": "Unique ID of this request \u2014 include it when contacting support or cross-referencing the request log"
+          }
+        }
+      },
+      "SingleGenerationResponse": {
+        "type": "object",
+        "description": "Success response for endpoints that return a single output URL: /edit-by-prompt, /animate, /upscale, /upscale-4k, /text-to-image.",
+        "required": [
+          "output",
+          "balance",
+          "cost",
+          "requestId"
+        ],
+        "properties": {
+          "output": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of the generated image (or video, for /animate)"
+          },
+          "balance": {
+            "type": "number",
+            "description": "Remaining account balance after this request"
+          },
+          "cost": {
+            "type": "number",
+            "description": "Cost charged for this request"
+          },
+          "requestId": {
+            "type": "integer",
+            "description": "Unique ID of this request \u2014 include it when contacting support or cross-referencing the request log"
+          }
+        }
+      },
+      "ArrayGenerationResponse": {
+        "type": "object",
+        "description": "Success response for endpoints that return a list of image variants: /render/exterior, /render/interior, /change-textures, /set-atmosphere, /style-transfer.",
+        "required": [
+          "output",
+          "balance",
+          "cost",
+          "requestId"
+        ],
+        "properties": {
+          "output": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "List of generated image URLs"
+          },
+          "balance": {
+            "type": "number",
+            "description": "Remaining account balance after this request"
+          },
+          "cost": {
+            "type": "number",
+            "description": "Cost charged for this request"
+          },
+          "requestId": {
+            "type": "integer",
+            "description": "Unique ID of this request \u2014 include it when contacting support or cross-referencing the request log"
+          }
+        }
+      },
+      "UpscaleInput": {
+        "required": [
+          "image"
+        ],
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Source image to upscale. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "targetResolution": {
+            "type": "string",
+            "enum": [
+              "4k",
+              "8k"
+            ],
+            "default": "4k",
+            "description": "Target resolution: 3840 (4k) or 7680 (8k) pixels on the longer side. Defaults to 4k if omitted"
+          },
+          "outputFormat": {
+            "type": "string",
+            "enum": [
+              "webp",
+              "jpg",
+              "png"
+            ],
+            "default": "jpg",
+            "description": "Output image format. Defaults to jpg if omitted. `png` is not available when `targetResolution` is `8k`"
+          }
+        }
+      },
+      "Upscale4kInput": {
+        "required": [
+          "image"
+        ],
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Source image to upscale. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "outputFormat": {
+            "type": "string",
+            "enum": [
+              "webp",
+              "jpg",
+              "png"
+            ],
+            "default": "jpg",
+            "description": "Output image format. Defaults to jpg if omitted. (`avif` was previously listed but is not supported by the upscale model and always failed.)"
+          }
+        }
+      },
+      "TextToImageInput": {
+        "required": [
+          "outputFormat",
+          "outputHeight",
+          "outputWidth",
+          "prompt"
+        ],
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Text description of the architectural image to generate"
+          },
+          "outputFormat": {
+            "type": "string",
+            "enum": [
+              "png",
+              "jpg",
+              "webp"
+            ],
+            "description": "Output image format (avif is not supported for text-to-image)"
+          },
+          "outputHeight": {
+            "maximum": 2048,
+            "minimum": 128,
+            "type": "number",
+            "description": "Output image height in pixels"
+          },
+          "outputWidth": {
+            "maximum": 2048,
+            "minimum": 128,
+            "type": "number",
+            "description": "Output image width in pixels"
+          },
+          "negativePrompt": {
+            "type": "string",
+            "description": "Text describing elements to exclude from the generated image"
+          }
+        }
+      },
+      "RenderInput": {
+        "required": [
+          "image",
+          "outputFormat"
+        ],
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Source image (sketch, drawing, or photo). Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "outputFormat": {
+            "type": "string",
+            "enum": [
+              "webp",
+              "jpg",
+              "png",
+              "avif"
+            ],
+            "description": "Output image format"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Text prompt to guide the exterior render style and elements"
+          }
+        }
+      },
+      "StyleTransferInput": {
+        "required": [
+          "image",
+          "outputFormat",
+          "referenceImage"
+        ],
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Source architectural image. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "outputFormat": {
+            "type": "string",
+            "enum": [
+              "webp",
+              "jpg",
+              "png",
+              "avif"
+            ],
+            "description": "Output image format"
+          },
+          "referenceImage": {
+            "type": "string",
+            "description": "Style reference image to transfer from. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Text prompt to guide the style transfer"
+          },
+          "negativePrompt": {
+            "type": "string",
+            "description": "Text describing elements to exclude from the output"
+          },
+          "styleTransferStrength": {
+            "type": "number",
+            "description": "How strongly to apply the reference style (0 = no effect, 1 = full transfer)"
+          }
+        }
+      },
+      "EditByPromptInput": {
+        "required": [
+          "image",
+          "prompt"
+        ],
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Source image to edit. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Natural-language instruction describing the edit to apply"
+          },
+          "referenceImage": {
+            "type": "string",
+            "description": "Optional reference image (e.g. a product photo or material sample) sent to the model together with the source image. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files. Refer to the reference image as \"attached image\" and be specific about how to apply it. For example: \"apply the attached material on the backsplash\" or \"replace the pendant light with the one from the attached image\"."
+          }
+        }
+      },
+      "ChangeTexturesInput": {
+        "oneOf": [
+          {
+            "title": "Reference image mode",
+            "type": "object",
+            "required": [
+              "image",
+              "mask",
+              "referenceImage"
+            ],
+            "properties": {
+              "image": {
+                "type": "string",
+                "description": "Source image whose textures to change. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+              },
+              "mask": {
+                "type": "string",
+                "description": "Mask marking the surfaces to retexture (white = change, black = keep). URL or base64-encoded image."
+              },
+              "referenceImage": {
+                "type": "string",
+                "description": "Reference image showing the desired texture. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files. Mutually exclusive with prompt."
+              }
+            }
+          },
+          {
+            "title": "Prompt mode",
+            "type": "object",
+            "required": [
+              "image",
+              "mask",
+              "prompt"
+            ],
+            "properties": {
+              "image": {
+                "type": "string",
+                "description": "Source image whose textures to change. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+              },
+              "mask": {
+                "type": "string",
+                "description": "Mask marking the surfaces to retexture (white = change, black = keep). URL or base64-encoded image."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "Natural-language description of the desired texture. Mutually exclusive with referenceImage."
+              }
+            }
+          }
+        ]
+      },
+      "SetAtmosphereInput": {
+        "oneOf": [
+          {
+            "title": "Interior mode",
+            "type": "object",
+            "required": [
+              "image",
+              "sceneType",
+              "lighting"
+            ],
+            "properties": {
+              "image": {
+                "type": "string",
+                "description": "Source image whose atmosphere to change. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+              },
+              "sceneType": {
+                "type": "string",
+                "enum": [
+                  "interior"
+                ],
+                "description": "Scene type of the source image"
+              },
+              "lighting": {
+                "type": "string",
+                "enum": [
+                  "midday_light",
+                  "golden_light",
+                  "blue_hour_light",
+                  "ambient_light",
+                  "warm_lamps",
+                  "dimmed_mood"
+                ],
+                "description": "Interior lighting mood to apply. Interior mode only."
+              }
+            }
+          },
+          {
+            "title": "Exterior mode",
+            "type": "object",
+            "required": [
+              "image",
+              "sceneType"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "timeOfDay"
+                ]
+              },
+              {
+                "required": [
+                  "season"
+                ]
+              },
+              {
+                "required": [
+                  "weather"
+                ]
+              }
+            ],
+            "properties": {
+              "image": {
+                "type": "string",
+                "description": "Source image whose atmosphere to change. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+              },
+              "sceneType": {
+                "type": "string",
+                "enum": [
+                  "exterior"
+                ],
+                "description": "Scene type of the source image"
+              },
+              "timeOfDay": {
+                "type": "string",
+                "enum": [
+                  "early_morning",
+                  "midday",
+                  "overcast_day",
+                  "golden_hour",
+                  "sunset",
+                  "blue_hour",
+                  "night",
+                  "starry_night",
+                  "northern_lights",
+                  "southern_lights"
+                ],
+                "description": "Time of day to render. Exterior mode only; at least one of timeOfDay, season, or weather is required."
+              },
+              "season": {
+                "type": "string",
+                "enum": [
+                  "spring",
+                  "summer",
+                  "autumn",
+                  "winter"
+                ],
+                "description": "Season to render. Exterior mode only; at least one of timeOfDay, season, or weather is required."
+              },
+              "weather": {
+                "type": "string",
+                "enum": [
+                  "clear",
+                  "overcast",
+                  "rain",
+                  "fog",
+                  "snow"
+                ],
+                "description": "Weather to render. Exterior mode only; at least one of timeOfDay, season, or weather is required."
+              }
+            }
+          }
+        ]
+      },
+      "AnimateInput": {
+        "required": [
+          "startFrameUrl",
+          "prompt"
+        ],
+        "type": "object",
+        "properties": {
+          "startFrameUrl": {
+            "type": "string",
+            "description": "Source image used as the start frame of the video. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Text prompt describing the motion to animate"
+          },
+          "endFrameUrl": {
+            "type": "string",
+            "description": "Optional image to use as the end frame. When provided, the video interpolates from the start frame to this frame. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          }
+        }
+      },
+      "AutoPromptInput": {
+        "required": [
+          "image"
+        ],
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Source image to analyze. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          }
+        }
+      },
+      "AutoPromptResponse": {
+        "type": "object",
+        "required": [
+          "output",
+          "balance",
+          "cost",
+          "requestId"
+        ],
+        "properties": {
+          "output": {
+            "type": "string",
+            "description": "The generated comma-separated render prompt (plain text, not a URL)"
+          },
+          "balance": {
+            "type": "number",
+            "description": "Remaining account balance after this request"
+          },
+          "cost": {
+            "type": "number",
+            "description": "Cost charged for this request"
+          },
+          "requestId": {
+            "type": "integer",
+            "description": "Unique ID of this request \u2014 include it when contacting support or cross-referencing the request log"
+          }
+        }
+      },
+      "BalanceResponse": {
+        "type": "object",
+        "required": [
+          "balance"
+        ],
+        "properties": {
+          "balance": {
+            "type": "number",
+            "description": "Current account balance in USD"
+          }
+        }
+      },
+      "SimpleErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error message describing what went wrong"
+          },
+          "message": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Deprecated duplicate of `error`, emitted only on gateway-level failures (403, 429, 5xx) for backwards compatibility. Read `error` instead."
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "api_key": {
+        "type": "apiKey",
+        "name": "x-api-key",
+        "in": "header"
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "API key not recognised by the billing service",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SimpleErrorResponse"
+            }
+          }
+        }
+      },
+      "PaymentRequired": {
+        "description": "Insufficient funds \u2014 top up the account balance before retrying. The request is not charged.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SimpleErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Missing or invalid API key",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SimpleErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Unknown endpoint",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SimpleErrorResponse"
+            }
+          }
+        }
+      },
+      "RequestTooLarge": {
+        "description": "Request body exceeds the 10 MB limit. Note this response is **plain text, not JSON** (`content-type: text`) with the body `HTTP content length exceeded 10485760 bytes.` \u2014 it is rejected at the gateway front door before any JSON error shape is applied, so it carries neither `error` nor `message`. Base64-encoding inflates an image by ~33%; pass a URL instead of inline base64 for large sources.",
+        "content": {
+          "text/plain": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limit exceeded \u2014 more than 5 requests/second (burst 20) from this API key. Retry with exponential backoff; rejected requests are not charged.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SimpleErrorResponse"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Internal server error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SimpleErrorResponse"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Billing service temporarily unreachable. The request is not charged; retry with backoff.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SimpleErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  }
+}

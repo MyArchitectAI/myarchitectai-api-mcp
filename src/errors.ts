@@ -21,6 +21,7 @@ export interface MyArchitectAIErrorOptions {
   status?: number | undefined;
   balance?: number | undefined;
   cost?: number | undefined;
+  requestId?: number | undefined;
   retryable?: boolean | undefined;
   retryAfterMs?: number | undefined;
   cause?: unknown;
@@ -32,6 +33,7 @@ export class MyArchitectAIError extends Error {
   readonly status: number | undefined;
   readonly balance: number | undefined;
   readonly cost: number | undefined;
+  readonly requestId: number | undefined;
   /** Whether the HTTP client may safely retry the request. */
   readonly retryable: boolean;
   /** Suggested delay before retrying, if the server provided one. */
@@ -44,6 +46,7 @@ export class MyArchitectAIError extends Error {
     this.status = options.status;
     this.balance = options.balance;
     this.cost = options.cost;
+    this.requestId = options.requestId;
     this.retryable = options.retryable ?? false;
     this.retryAfterMs = options.retryAfterMs;
   }
@@ -58,8 +61,8 @@ export class ConfigError extends MyArchitectAIError {
 
 /** 401/403 — the API key is missing, malformed, or rejected. Not retryable. */
 export class AuthError extends MyArchitectAIError {
-  constructor(message: string) {
-    super(message, { kind: 'auth', status: 403, retryable: false });
+  constructor(message: string, status = 403) {
+    super(message, { kind: 'auth', status, retryable: false });
   }
 }
 
@@ -68,8 +71,8 @@ export class AuthError extends MyArchitectAIError {
  * The API still reports `balance` and `cost` (cost is typically 0). Not retryable.
  */
 export class RequestError extends MyArchitectAIError {
-  constructor(message: string, balance?: number, cost?: number) {
-    super(message, { kind: 'request', status: 400, retryable: false, balance, cost });
+  constructor(message: string, balance?: number, cost?: number, requestId?: number, status = 400) {
+    super(message, { kind: 'request', status, retryable: false, balance, cost, requestId });
   }
 }
 
