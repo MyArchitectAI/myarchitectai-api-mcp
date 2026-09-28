@@ -92,11 +92,8 @@ export class RemoteMediaService extends MediaService {
     } else {
       addresses = await withDeadline(this.#resolve(host), this.#timeoutMs);
     }
-    if (addresses.length === 0 || addresses.some(({ address }) => !isPublicAddress(address))) {
-      throw new RequestError('Remote URL host is unavailable.');
-    }
-    const selected = addresses[0];
-    if (selected === undefined) {
+    const selected = addresses.at(0);
+    if (selected === undefined || addresses.some(({ address }) => !isPublicAddress(address))) {
       throw new RequestError('Remote URL host is unavailable.');
     }
     try {
@@ -167,7 +164,9 @@ const withDeadline = async <T>(promise: Promise<T>, ms: number): Promise<T> => {
     return await Promise.race([
       promise,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new RequestError('Remote URL host is unavailable.')), ms);
+        timer = setTimeout(() => {
+          reject(new RequestError('Remote URL host is unavailable.'));
+        }, ms);
       }),
     ]);
   } finally {
@@ -180,7 +179,9 @@ const withDeadline = async <T>(promise: Promise<T>, ms: number): Promise<T> => {
 const requestPinned = (url: URL, selected: Address, method: 'GET' | 'HEAD', maxBytes: number, timeoutMs: number): Promise<Reply> =>
   new Promise((resolve, reject) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
     let settled = false;
     const finish = (reply: Reply | Error): void => {
       if (settled) {
@@ -239,10 +240,16 @@ const requestPinned = (url: URL, selected: Address, method: 'GET' | 'HEAD', maxB
         }
         chunks.push(chunk);
       });
-      response.on('end', () => finish({ status, contentType, contentLength, bytes: Buffer.concat(chunks), tooLarge: false }));
-      response.on('error', (error: Error) => finish(error));
+      response.on('end', () => {
+        finish({ status, contentType, contentLength, bytes: Buffer.concat(chunks), tooLarge: false });
+      });
+      response.on('error', (error: Error) => {
+        finish(error);
+      });
     });
-    req.on('error', (error: Error) => finish(error));
+    req.on('error', (error: Error) => {
+      finish(error);
+    });
     req.end();
   });
 

@@ -93,8 +93,12 @@ const readJsonBody = (request: IncomingMessage, maxBytes: number, signal: AbortS
       reject(new RequestBodyError(400));
     }
   };
-  const onError = (): void => fail(new RequestBodyError(400));
-  const onAborted = (): void => fail(new RequestBodyError(400));
+  const onError = (): void => {
+    fail(new RequestBodyError(400));
+  };
+  const onAborted = (): void => {
+    fail(new RequestBodyError(400));
+  };
   request.on('data', onData);
   request.on('end', onEnd);
   request.on('error', onError);
@@ -129,7 +133,10 @@ const awaitUntilAbort = <T>(work: Promise<T>, signal: AbortSignal): Promise<T> =
   signal.addEventListener('abort', onAbort, { once: true });
   work.then(
     (value) => { signal.removeEventListener('abort', onAbort); resolve(value); },
-    (error: unknown) => { signal.removeEventListener('abort', onAbort); reject(error); },
+    (error: unknown) => {
+      signal.removeEventListener('abort', onAbort);
+      reject(error instanceof Error ? error : new Error('Request failed'));
+    },
   );
 });
 
@@ -190,6 +197,7 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
     response.once('finish', logCompletion);
     response.once('close', logCompletion);
     const abortController = new AbortController();
+    const isAdmissionAborted = (): boolean => abortController.signal.aborted;
     response.once('close', () => {
       if (!response.writableFinished) {
         abortController.abort();
@@ -264,21 +272,21 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
         }
       }, config.requestTimeoutMs);
       try {
-        if (abortController.signal.aborted) {
+        if (isAdmissionAborted()) {
           return;
         }
         let identity: VerifiedIdentity;
         try {
           identity = await awaitUntilAbort(authenticate(request), abortController.signal);
         } catch {
-          if (abortController.signal.aborted) {
+          if (isAdmissionAborted()) {
             return;
           }
           response.setHeader('www-authenticate', `Bearer resource_metadata="${config.metadataUrl}", scope="openid"`);
           sendJson(response, 401, { error: 'Unauthorized' });
           return;
         }
-        if (abortController.signal.aborted) {
+        if (isAdmissionAborted()) {
           return;
         }
         const contentType = request.headers['content-type'];
@@ -290,14 +298,14 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
         try {
           body = await readJsonBody(request, config.maxBodyBytes, abortController.signal);
         } catch (error) {
-          if (abortController.signal.aborted) {
+          if (isAdmissionAborted()) {
             return;
           }
           const status = error instanceof RequestBodyError ? error.status : 400;
           sendJson(response, status, { error: status === 413 ? 'Request body too large' : 'Malformed JSON' });
           return;
         }
-        if (abortController.signal.aborted) {
+        if (isAdmissionAborted()) {
           return;
         }
         let account: Config | undefined;
@@ -306,17 +314,17 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
             signal: abortController.signal,
           })), abortController.signal);
         } catch {
-          if (abortController.signal.aborted) {
+          if (isAdmissionAborted()) {
             return;
           }
           capture({ fingerprint: 'remote.account_lookup', route: '/mcp', status: 503, requestId });
           sendJson(response, 503, { error: 'Account lookup unavailable' });
           return;
         }
-        if (abortController.signal.aborted) {
+        if (isAdmissionAborted()) {
           return;
         }
-        if (!account?.apiKey?.trim()) {
+        if (!account || !account.apiKey.trim()) {
           sendJson(response, 403, { error: 'Account not linked' });
           return;
         }
@@ -327,11 +335,11 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
         const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
         try {
           registerTools(server, { client: createClient(account), session: lease.session, media: createMedia(account), config: account, mode: 'remote' });
-          if (abortController.signal.aborted) {
+          if (isAdmissionAborted()) {
             return;
           }
           await server.connect(transport as unknown as Parameters<McpServer['connect']>[0]);
-          if (abortController.signal.aborted) {
+          if (isAdmissionAborted()) {
             return;
           }
           dispatchStarted = true;

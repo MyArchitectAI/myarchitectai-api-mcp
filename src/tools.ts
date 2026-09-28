@@ -182,7 +182,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
         ? 'Load a public HTTPS image URL or inline data:image URI for an inline preview. Local files and browser opening are unavailable. Does not charge the API account.'
         : 'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
           'inspecting a generation result before continuing. Accepts a public HTTPS URL, an inline ' +
-          'data:image/<mime>;base64,<payload> URI, or a local file path. Optionally also opens it in the default ' +
+          'base64-encoded data:image URI, or a local file path. Optionally also opens it in the default ' +
           'browser when a display is available. Does not charge the API account.',
       inputSchema: deps.mode === 'remote' ? remotePreviewImageShape : previewImageShape,
       annotations: { readOnlyHint: true, openWorldHint: true },
