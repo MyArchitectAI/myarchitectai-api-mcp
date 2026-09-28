@@ -133,11 +133,9 @@ CI checks the live contract on PRs, main pushes and manual dispatch. A spec chan
 
 ## Authentication
 
-The server authenticates with an **API key** (`x-api-key`) — the only scheme the MyArchitectAI API
-supports. It runs locally over stdio, so the key stays in your environment. There is no OAuth
-provider on the API side; OAuth would only become relevant if this were hosted as a remote MCP
-server, and even then the server would still call the API with a key. Credential handling is
-isolated in `src/config.ts` and the client's header injection.
+The stdio server authenticates to the MyArchitectAI API with an **API key** (`x-api-key`) from your environment. Credential handling is isolated in `src/config.ts` and the client's header injection. The executable is `myarchitectai-mcp`; the generic `mcp` alias has been removed. Existing `npx -y @myarchitectai/mcp` configurations still select the package's single executable.
+
+The repository also contains an OAuth-protected Streamable HTTP server factory for host integration. It verifies an audience-bound OAuth token and requires the host to resolve the authenticated user's account. It never falls back to the stdio API key. This is a preparation module, not a deployed public connector: billing integration, consent, hosting and Claude acceptance are still pending. See [the remote connector integration contract](docs/REMOTE-CONNECTOR.md).
 
 ## Contributing
 
@@ -152,6 +150,7 @@ npm run build       # compile TypeScript to dist/
 npm run typecheck   # strict type-check of src + tests
 npm test            # unit + integration tests (node:test)
 node scripts/smoke.mjs   # spawn the built server and list its tools over stdio
+npm run smoke:remote     # built HTTP server, synthetic accounts only; no API charges
 ```
 
 Run `npm run build && npm run typecheck && npm test` before submitting a PR.

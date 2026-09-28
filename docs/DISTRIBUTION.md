@@ -4,13 +4,13 @@ How this MCP server can be added to the various agent hosts, and the strategy
 for covering them. **Current focus: the Claude ecosystem.** The OpenAI/Codex and
 other-host sections are captured here for later — they are *not yet implemented*.
 
-Researched May 2026; flag anything that looks stale before relying on it.
+Historical research from May 2026; the host matrix and platform details below are not current acceptance evidence. For the HTTP server preparation and the remaining billing, consent and deployment work, use [REMOTE-CONNECTOR.md](REMOTE-CONNECTOR.md), checked September 2026.
 
 ## TL;DR strategy
 
 - **One tool core, two transports.** Write the tools once; expose them over:
   - **stdio** — covers every *local* host (Claude Code, Claude Desktop, Codex, Cursor, Windsurf, VS Code). This is what we ship today.
-  - **Streamable HTTP (+ OAuth)** — required for *browser* hosts (claude.ai, ChatGPT). Not built yet.
+  - **Streamable HTTP (+ OAuth)** — a resource-server factory is now available for host integration; the public connector is not deployed. See the current integration contract above.
 - **SSE is deprecated** protocol-wide; if/when we add a network transport, use **Streamable HTTP**, not SSE.
 - **Packaging is per-host** on top of the same server: npm package (universal for stdio configs via `npx`), a Claude Code plugin, a Claude Desktop `.mcpb` bundle, and a hosted HTTP deployment for the web hosts.
 

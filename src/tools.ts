@@ -46,6 +46,7 @@ export interface ToolDeps {
   session: SessionStore;
   media: MediaService;
   config: Config;
+  mode?: 'stdio' | 'remote';
 }
 
 export const API_TOOL_ENDPOINTS = {
@@ -79,8 +80,22 @@ const TOOL_NAMES = [
 export function registerTools(server: McpServer, deps: ToolDeps): string[] {
   registerGenerationTools(server, deps);
   registerQolTools(server, deps);
-  return [...TOOL_NAMES];
+  return deps.mode === 'remote' ? TOOL_NAMES.filter((name) => name !== 'save_image') : [...TOOL_NAMES];
 }
+
+const remotePreviewImageShape = {
+  url: z.string().min(1).describe('A public HTTPS image URL or inline data:image URI.'),
+  open: z.boolean().optional().describe('Browser opening is unavailable in remote mode; true is rejected.'),
+};
+
+const remoteUsageOutputShape = {
+  totalGenerations: usageOutputShape.totalGenerations,
+  failedGenerations: usageOutputShape.failedGenerations,
+  totalCost: usageOutputShape.totalCost,
+  lastKnownBalance: usageOutputShape.lastKnownBalance,
+  byTool: usageOutputShape.byTool,
+  since: usageOutputShape.since,
+};
 
 type GenerationTool = {
   name: Exclude<keyof typeof API_TOOL_ENDPOINTS, 'auto_prompt' | 'balance'>;
@@ -138,7 +153,7 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
       };
     } catch (err) {
       recordFailure(deps, err);
-      return formatError('Auto prompt', err);
+      return formatError('Auto prompt', err, deps.mode);
     }
   });
 
@@ -153,7 +168,7 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
       deps.session.updateBalance(result.balance);
       return { content: [{ type: 'text', text: `Account balance: $${formatNumber(result.balance)} USD` }], structuredContent: { ...result } };
     } catch (err) {
-      return formatError('Balance check', err);
+      return formatError('Balance check', err, deps.mode);
     }
   });
 }
@@ -163,16 +178,23 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
     'preview_image',
     {
       title: 'Preview Image',
-      description:
-        'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
-        'inspecting a generation result before continuing. Accepts a public HTTPS URL, an inline ' +
-        'data:image/<mime>;base64,<payload> URI, or a local file path. Optionally also opens it in the default ' +
-        'browser when a display is available. Does not charge the API account.',
-      inputSchema: previewImageShape,
+      description: deps.mode === 'remote'
+        ? 'Load a public HTTPS image URL or inline data:image URI for an inline preview. Local files and browser opening are unavailable. Does not charge the API account.'
+        : 'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
+          'inspecting a generation result before continuing. Accepts a public HTTPS URL, an inline ' +
+          'data:image/<mime>;base64,<payload> URI, or a local file path. Optionally also opens it in the default ' +
+          'browser when a display is available. Does not charge the API account.',
+      inputSchema: deps.mode === 'remote' ? remotePreviewImageShape : previewImageShape,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ url, open }) => {
       try {
+        if (deps.mode === 'remote' && open === true) {
+          return { content: [{ type: 'text', text: 'Preview failed: browser opening is unavailable in remote mode.' }], isError: true };
+        }
+        if (deps.mode === 'remote' && classifyImageInput(url) === 'path') {
+          return { content: [{ type: 'text', text: 'Preview failed: local files are unavailable in remote mode.' }], isError: true };
+        }
         const fetched = await deps.media.fetchForPreview(url);
         // A data: URI *is* the image, not a path/URL the OS can open — never hand
         // megabytes of base64 to `open`/`xdg-open`, nor tell the user to open it.
@@ -180,7 +202,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
         const isDataUri = kind === 'data';
         // Resolve ~/relative/file:// inputs to an absolute path before the OS
         // opener — `open`/`xdg-open` don't expand `~`.
-        const opened = open === true && !isDataUri
+        const opened = deps.mode !== 'remote' && open === true && !isDataUri
           ? openInBrowser(kind === 'path' ? resolveLocalPath(url) : url)
           : false;
         const note = open === true && isDataUri
@@ -202,39 +224,41 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
           ],
         };
       } catch (err) {
-        return formatError('Preview', err);
+        return formatError('Preview', err, deps.mode);
       }
     },
   );
 
-  server.registerTool(
-    'save_image',
-    {
-      title: 'Save Image',
-      description:
-        'Save an image to local disk (defaults to the configured download directory) and return the saved file ' +
-        'path. Accepts a public HTTPS URL, an inline data:image/<mime>;base64,<payload> URI, or a local file ' +
-        'path. Generation output URLs are public but may expire, so saving keeps a permanent copy. Consumes no ' +
-        'API balance.',
-      inputSchema: saveImageShape,
-      outputSchema: saveImageOutputShape,
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-    },
-    async ({ url, filename, dir }) => {
-      try {
-        const saved = await deps.media.save(url, {
-          dir: dir ?? deps.config.downloadDir,
-          ...(filename !== undefined ? { filename } : {}),
-        });
-        return {
-          content: [{ type: 'text', text: `Saved ${formatBytes(saved.bytes)} (${saved.mimeType}) to ${saved.path}` }],
-          structuredContent: { path: saved.path, bytes: saved.bytes, mimeType: saved.mimeType },
-        };
-      } catch (err) {
-        return formatError('Save', err);
-      }
-    },
-  );
+  if (deps.mode !== 'remote') {
+    server.registerTool(
+      'save_image',
+      {
+        title: 'Save Image',
+        description:
+          'Save an image to local disk (defaults to the configured download directory) and return the saved file ' +
+          'path. Accepts a public HTTPS URL, an inline data:image/<mime>;base64,<payload> URI, or a local file ' +
+          'path. Generation output URLs are public but may expire, so saving keeps a permanent copy. Consumes no ' +
+          'API balance.',
+        inputSchema: saveImageShape,
+        outputSchema: saveImageOutputShape,
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      },
+      async ({ url, filename, dir }) => {
+        try {
+          const saved = await deps.media.save(url, {
+            dir: dir ?? deps.config.downloadDir,
+            ...(filename !== undefined ? { filename } : {}),
+          });
+          return {
+            content: [{ type: 'text', text: `Saved ${formatBytes(saved.bytes)} (${saved.mimeType}) to ${saved.path}` }],
+            structuredContent: { path: saved.path, bytes: saved.bytes, mimeType: saved.mimeType },
+          };
+        } catch (err) {
+          return formatError('Save', err, deps.mode);
+        }
+      },
+    );
+  }
 
   server.registerTool(
     'validate_image_url',
@@ -266,7 +290,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
           },
         };
       } catch (err) {
-        return formatError('Validate', err);
+        return formatError('Validate', err, deps.mode);
       }
     },
   );
@@ -278,14 +302,14 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       description:
         "Report this session's MyArchitectAI usage: number of generations, total USD spent, the last known " +
         'balance (from the most recent generation — no paid call), and a per-tool breakdown. Does not charge the API account.',
-      outputSchema: usageOutputShape,
+      outputSchema: deps.mode === 'remote' ? remoteUsageOutputShape : usageOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () => {
       const summary = deps.session.summary();
-      const fingerprint = apiKeyFingerprint(deps.config.apiKey);
+      const fingerprint = deps.mode === 'remote' ? undefined : apiKeyFingerprint(deps.config.apiKey);
       const lines = [
-        `API key: ${fingerprint}`,
+        ...(fingerprint === undefined ? [] : [`API key: ${fingerprint}`]),
         `Generations this session: ${summary.totalGenerations}`,
         `Failed generations: ${summary.failedGenerations}`,
         `Total cost: ${formatNumber(summary.totalCost)} USD`,
@@ -303,7 +327,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
           lastKnownBalance: summary.lastKnownBalance,
           byTool: summary.byTool,
           since: summary.since,
-          apiKeyFingerprint: fingerprint,
+          ...(fingerprint === undefined ? {} : { apiKeyFingerprint: fingerprint }),
         },
       };
     },
@@ -356,7 +380,7 @@ async function generate(
     // Count API/validation rejections (not transport errors) and capture any
     // balance the API reported on the failed call.
     recordFailure(deps, err);
-    return formatError(label, err);
+    return formatError(label, err, deps.mode);
   }
 }
 
@@ -386,7 +410,11 @@ function formatSuccess(label: string, result: GenerationResult, outputType: 'ima
   };
 }
 
-function formatError(label: string, err: unknown): CallToolResult {
+function formatError(label: string, err: unknown, mode: ToolDeps['mode']): CallToolResult {
+  if (mode === 'remote') {
+    const status = err instanceof MyArchitectAIError && err.status !== undefined ? ` (HTTP ${err.status})` : '';
+    return { content: [{ type: 'text', text: `${label} failed${status}.` }], isError: true };
+  }
   if (err instanceof MyArchitectAIError) {
     const meta: string[] = [];
     if (err.requestId !== undefined) meta.push(`request ID ${err.requestId}`);

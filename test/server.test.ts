@@ -22,7 +22,7 @@ const testConfig: Config = {
   stateFile: undefined,
 };
 
-function buildServer(fetchImpl: FetchLike): McpServer {
+function buildServer(fetchImpl: FetchLike, mode: 'stdio' | 'remote' = 'stdio'): McpServer {
   const client = new MyArchitectAIClient(testConfig, fetchImpl);
   const session = new SessionStore();
   const media = new MediaService({
@@ -31,7 +31,7 @@ function buildServer(fetchImpl: FetchLike): McpServer {
     fetchImpl,
   });
   const server = new McpServer({ name: 'test', version: '0.0.0' });
-  registerTools(server, { client, session, media, config: testConfig });
+  registerTools(server, { client, session, media, config: testConfig, mode });
   return server;
 }
 
@@ -48,6 +48,26 @@ function firstText(content: unknown): string {
 }
 
 describe('MCP server integration', () => {
+  it('remote tool set omits save and refuses host file and browser access', async () => {
+    const client = await connect(buildServer(async () => new Response('{}'), 'remote'));
+    const { tools } = await client.listTools();
+    assert.equal(tools.some((tool) => tool.name === 'save_image'), false);
+    const preview = tools.find((tool) => tool.name === 'preview_image');
+    assert.ok(preview);
+    assert.doesNotMatch(preview.description ?? '', /local file path/);
+    const file = await client.callTool({ name: 'preview_image', arguments: { url: '/etc/passwd' } });
+    assert.equal(file.isError, true);
+    const open = await client.callTool({ name: 'preview_image', arguments: { url: 'data:image/png;base64,AQID', open: true } });
+    assert.equal(open.isError, true);
+    const inline = await client.callTool({ name: 'preview_image', arguments: { url: 'data:image/png;base64,AQID' } });
+    assert.equal(inline.isError, undefined);
+    assert.ok((inline.content as Array<{ type: string }>).some((block) => block.type === 'image'));
+    const usage = await client.callTool({ name: 'usage_summary', arguments: {} });
+    assert.doesNotMatch(firstText(usage.content), /API key/i);
+    assert.equal(Object.hasOwn(usage.structuredContent ?? {}, 'apiKeyFingerprint'), false);
+    await client.close();
+  });
+
   it('lists all generation and QoL tools', async () => {
     const client = await connect(buildServer(async () => new Response('{}')));
     const { tools } = await client.listTools();
