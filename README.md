@@ -135,7 +135,7 @@ CI checks the live contract on PRs, main pushes and manual dispatch. A spec chan
 
 The stdio server authenticates to the MyArchitectAI API with an **API key** (`x-api-key`) from your environment. Credential handling is isolated in `src/config.ts` and the client's header injection. The executable is `myarchitectai-mcp`; the generic `mcp` alias has been removed. Existing `npx -y @myarchitectai/mcp` configurations still select the package's single executable.
 
-The repository also contains an OAuth-protected Streamable HTTP server factory for host integration. It verifies an audience-bound OAuth token and requires the host to resolve the authenticated user's account. It never falls back to the stdio API key. This is a preparation module, not a deployed public connector: billing integration, consent, hosting and Claude acceptance are still pending. See [the remote connector integration contract](docs/REMOTE-CONNECTOR.md).
+The repository also prepares an OAuth-protected Streamable HTTP connector for the company's Vercel account. It verifies an audience-bound OAuth token, resolves an explicitly bound API-portal key with ownership checks, and uses shared per-user history. It never falls back to the stdio API key. The hosted runtime requires an explicit API-balance configuration; website subscription credits are not implemented. No public connector has been deployed, and real OAuth consent and Claude acceptance remain pending. See the [integration contract](docs/REMOTE-CONNECTOR.md), [hosted runtime configuration](docs/HOSTED-RUNTIME.md), and [production deployment setup](docs/DEPLOYMENT.md). The deployment workflow is production-only; there are no preview deployments.
 
 ## Contributing
 

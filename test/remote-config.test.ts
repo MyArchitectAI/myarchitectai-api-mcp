@@ -16,6 +16,9 @@ describe('remote configuration', () => {
     assert.equal(config.metadataPath, '/.well-known/oauth-protected-resource/mcp');
     assert.equal(config.metadataUrl, 'https://mcp.example.com/.well-known/oauth-protected-resource');
     assert.deepEqual([...config.allowedHosts], ['mcp.example.com']);
+    assert.equal(config.deploymentRevision, undefined);
+    const revision = '0123456789abcdef0123456789abcdef01234567';
+    assert.equal(validateRemoteHttpConfig({ ...base, deploymentRevision: revision }).deploymentRevision, revision);
   });
 
   it('rejects unsafe resource, origin, client and capacity configurations', () => {
@@ -31,6 +34,10 @@ describe('remote configuration', () => {
       { ...base, maxBodyBytes: 0 },
       { ...base, maxConcurrentRequests: 0 },
       { ...base, healthToken: '' },
+      { ...base, deploymentRevision: '' },
+      { ...base, deploymentRevision: '0123456789abcdef0123456789abcdef0123456' },
+      { ...base, deploymentRevision: '0123456789abcdef0123456789abcdef0123456G' },
+      { ...base, deploymentRevision: '0123456789ABCDEF0123456789abcdef01234567' },
     ];
     for (const candidate of invalid) {
       assert.throws(() => validateRemoteHttpConfig(candidate));

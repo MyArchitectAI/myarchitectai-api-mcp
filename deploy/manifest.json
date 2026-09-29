@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "service": "myarchitectai-mcp",
+  "deployment": {
+    "provider": "vercel",
+    "owner": "MyArchitectAI company team",
+    "productionOrigin": "https://mcp.myarchitectai.com"
+  },
+  "health": {
+    "process": "/health",
+    "deep": "/health/deep",
+    "deepAuthHeader": "X-Obs-Token",
+    "deepChecks": ["account", "jwks", "redis"]
+  },
+  "dependencies": [
+    {
+      "service": "portal_supabase",
+      "deepCheck": "account",
+      "readOperations": ["GET /rest/v1/clients", "GET /rest/v1/api_keys"],
+      "timeoutMs": 5000,
+      "maxAttempts": 1
+    },
+    {
+      "service": "aws_api_gateway",
+      "deepCheck": "account",
+      "readOperations": ["GET /apikeys/{aws_key_id}?includeValue=true"],
+      "timeoutMs": 5000,
+      "maxAttempts": 1
+    },
+    {
+      "service": "supabase_jwks",
+      "deepCheck": "jwks",
+      "readOperations": ["GET {issuer}/.well-known/jwks.json"],
+      "timeoutMs": 5000,
+      "maxAttempts": 1,
+      "note": "Authentication key resolution may use jose's cache; its resolution event is not an HTTP-egress claim."
+    },
+    {
+      "service": "upstash_redis",
+      "deepCheck": "redis",
+      "readOperations": ["POST / with Redis PING command"],
+      "timeoutMs": 5000,
+      "maxAttempts": 1,
+      "note": "Operational history EVAL commands may change data or TTL and are outside this read-only health probe."
+    }
+  ]
+}

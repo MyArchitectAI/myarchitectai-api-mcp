@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { MyArchitectAIClient, type FetchLike } from '../src/client.js';
 import type { Config } from '../src/config.js';
-import { createRemoteServer, type RemoteServerOptions } from '../src/remote.js';
+import { createRemoteHandler, createRemoteServer, type RemoteServerOptions } from '../src/remote.js';
+import { RemoteSessionRegistry, RemoteSessionUnavailableError,
+  type RemoteSessionProvider } from '../src/remote-session.js';
 
 const resource = 'https://mcp.example.com/mcp';
 const issuer = 'https://auth.example.com/auth/v1';
@@ -20,7 +23,7 @@ const account = (subject: string): Config => ({
   stateFile: undefined,
 });
 
-const fixture = async (overrides: Partial<RemoteServerOptions> = {}) => {
+const fixture = async (overrides: Partial<RemoteServerOptions> = {}, useHandler = false) => {
   const { privateKey, publicKey } = await generateKeyPair('ES256');
   const jwk = await exportJWK(publicKey);
   const jwks = createLocalJWKSet({ keys: [{ ...jwk, alg: 'ES256', use: 'sig' }] });
@@ -35,14 +38,20 @@ const fixture = async (overrides: Partial<RemoteServerOptions> = {}) => {
       : { output: [`https://images.synthetic.test/${key}.png`], balance: 10, cost: 1 };
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   };
-  const server = createRemoteServer({
+  const options: RemoteServerOptions = {
     auth: { canonicalResource: resource, issuer, jwks, allowedOAuthClientIds: ['trusted-client'],
       allowedHosts: ['127.0.0.1'], maxBodyBytes: 2_000, ...overrides.auth },
     resolveAccount: overrides.resolveAccount ?? ((identity) => account(identity.subject)),
     createClient: overrides.createClient ?? ((config) => new MyArchitectAIClient(config, syntheticFetch)),
     ...(overrides.sessions ? { sessions: overrides.sessions } : {}),
     ...(overrides.onError ? { onError: overrides.onError } : {}),
-  });
+    ...(overrides.checkHealth ? { checkHealth: overrides.checkHealth } : {}),
+  };
+  const handlerRequests: Promise<void>[] = [];
+  const handler = createRemoteHandler(options);
+  const server = useHandler ? createServer((request, response) => {
+    handlerRequests.push(handler(request, response));
+  }) : createRemoteServer(options);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -54,7 +63,7 @@ const fixture = async (overrides: Partial<RemoteServerOptions> = {}) => {
   const close = async (): Promise<void> => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };
-  return { server, endpoint, token, close, upstreamKeys };
+  return { server, endpoint, token, close, upstreamKeys, handlerRequests };
 };
 
 const connect = async (endpoint: URL, token: string): Promise<Client> => {
@@ -106,7 +115,7 @@ describe('remote MCP HTTP boundary', () => {
     const app = await fixture({ auth: {
       canonicalResource: resource, issuer, allowedOAuthClientIds: ['trusted-client'],
       allowedOrigins: ['https://trusted.example'], healthToken: 'synthetic-observer-token',
-    } });
+    }, checkHealth: async () => ({ status: 'ok', checks: { account: true, jwks: true, redis: true } }) });
     try {
       const auth = `Bearer ${await app.token('user-a')}`;
       for (const method of ['GET', 'DELETE']) {
@@ -128,9 +137,32 @@ describe('remote MCP HTTP boundary', () => {
         headers: { authorization: auth, 'content-type': 'application/json' }, body: '{' });
       assert.equal(malformed.status, 400);
       const deepUrl = new URL('/health/deep', app.endpoint);
-      assert.equal((await fetch(deepUrl)).status, 401);
+      assert.equal((await fetch(deepUrl)).status, 404);
       const deep = await fetch(deepUrl, { headers: { 'x-obs-token': 'synthetic-observer-token' } });
-      assert.deepEqual(await deep.json(), { status: 'ok', scope: 'process' });
+      assert.deepEqual(await deep.json(), { status: 'ok', scope: 'dependencies',
+        checks: { account: true, jwks: true, redis: true } });
+      assert.deepEqual(app.upstreamKeys, []);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('reports an exact deployment revision without implying account or OAuth readiness', async () => {
+    const revision = '0123456789abcdef0123456789abcdef01234567';
+    const app = await fixture({ auth: { canonicalResource: resource, issuer,
+      allowedOAuthClientIds: ['trusted-client'], deploymentRevision: revision,
+      healthToken: 'synthetic-observer-token' },
+    checkHealth: async () => ({ status: 'ok', checks: { account: true, jwks: true, redis: true } }) }, true);
+    try {
+      const health = await fetch(new URL('/health', app.endpoint));
+      assert.deepEqual(await health.json(), { status: 'ok', scope: 'process', revision });
+      const deep = await fetch(new URL('/health/deep', app.endpoint), {
+        headers: { 'x-obs-token': 'synthetic-observer-token' },
+      });
+      assert.deepEqual(await deep.json(), { status: 'ok', scope: 'dependencies',
+        checks: { account: true, jwks: true, redis: true } });
+      assert.equal(app.handlerRequests.length, 2);
+      await Promise.all(app.handlerRequests);
       assert.deepEqual(app.upstreamKeys, []);
     } finally {
       await app.close();
@@ -212,21 +244,104 @@ describe('remote MCP HTTP boundary', () => {
     }
   });
 
+  it('awaits asynchronous session release after the HTTP response ends', async () => {
+    const registry = new RemoteSessionRegistry();
+    let releaseGate: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const sessions: RemoteSessionProvider = {
+      acquire: (identity) => {
+        const lease = registry.acquire(identity);
+        return { session: lease.session, release: async () => {
+          await gate;
+          lease.release();
+        } };
+      },
+    };
+    const app = await fixture({ sessions }, true);
+    try {
+      const response = await fetch(app.endpoint, { method: 'POST',
+        headers: { authorization: `Bearer ${await app.token('user-a')}`, 'content-type': 'application/json',
+          accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) });
+      assert.equal(response.status, 200);
+      const work = app.handlerRequests.at(-1);
+      assert.ok(work);
+      let settled = false;
+      void work.then(() => { settled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(settled, false);
+      releaseGate?.();
+      await work;
+      assert.equal(settled, true);
+    } finally {
+      releaseGate?.();
+      await app.close();
+    }
+  });
+
+  it('rejects unavailable history and discards a lease acquired after timeout', async () => {
+    const registry = new RemoteSessionRegistry();
+    let finishAcquire: (() => void) | undefined;
+    let releases = 0;
+    let acquisitions = 0;
+    const sessions: RemoteSessionProvider = {
+      acquire: (identity) => {
+        acquisitions++;
+        if (acquisitions === 1) {
+          throw new RemoteSessionUnavailableError();
+        }
+        return new Promise((resolve) => {
+          finishAcquire = () => {
+            const lease = registry.acquire(identity);
+            resolve({ session: lease.session, release: () => {
+              releases++;
+              lease.release();
+            } });
+          };
+        });
+      },
+    };
+    const app = await fixture({ sessions, auth: { canonicalResource: resource, issuer,
+      allowedOAuthClientIds: ['trusted-client'], requestTimeoutMs: 40 } }, true);
+    try {
+      const authorization = `Bearer ${await app.token('user-a')}`;
+      const post = () => fetch(app.endpoint, { method: 'POST',
+        headers: { authorization, 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) });
+      assert.equal((await post()).status, 503);
+      assert.equal((await post()).status, 504);
+      const timedOutWork = app.handlerRequests.at(-1);
+      assert.ok(timedOutWork);
+      await timedOutWork;
+      finishAcquire?.();
+      for (let attempt = 0; attempt < 20 && releases === 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assert.equal(releases, 1);
+      assert.deepEqual(app.upstreamKeys, []);
+    } finally {
+      finishAcquire?.();
+      await app.close();
+    }
+  });
+
   it('retains completed generation history when the HTTP response times out mid-generation', async () => {
     let releaseUpstream: (() => void) | undefined;
     let signalUpstreamStarted: (() => void) | undefined;
+    let generationCalls = 0;
     const upstreamGate = new Promise<void>((resolve) => { releaseUpstream = resolve; });
     const upstreamStarted = new Promise<void>((resolve) => { signalUpstreamStarted = resolve; });
     const app = await fixture({
       auth: { canonicalResource: resource, issuer, allowedOAuthClientIds: ['trusted-client'],
         requestTimeoutMs: 100, maxConcurrentRequests: 1 },
       createClient: (config) => new MyArchitectAIClient(config, async () => {
+        generationCalls++;
         signalUpstreamStarted?.();
         await upstreamGate;
         return new Response(JSON.stringify({ output: ['https://images.synthetic.test/finished.png'],
           balance: 9, cost: 1 }), { status: 200, headers: { 'content-type': 'application/json' } });
       }),
-    });
+    }, true);
     try {
       const signed = await app.token('user-a');
       const client = await connect(app.endpoint, signed);
@@ -236,14 +351,22 @@ describe('remote MCP HTTP boundary', () => {
           prompt: 'Synthetic pavilion', outputFormat: 'png', outputWidth: 512, outputHeight: 512,
         } }).then(() => undefined, () => { callFailed = true; });
         await upstreamStarted;
+        const generationWork = app.handlerRequests.at(-1);
+        assert.ok(generationWork);
+        let workSettled = false;
+        void generationWork.then(() => { workSettled = true; });
         await new Promise((resolve) => setTimeout(resolve, 160));
         await call;
         assert.equal(callFailed, true);
+        assert.equal(workSettled, false);
         const busy = await fetch(app.endpoint, { method: 'POST',
           headers: { authorization: `Bearer ${signed}`, 'content-type': 'application/json' },
           body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' }) });
         assert.equal(busy.status, 503);
         releaseUpstream?.();
+        await generationWork;
+        assert.equal(workSettled, true);
+        assert.equal(generationCalls, 1);
         const historyClient = await connect(app.endpoint, signed);
         try {
           let count = 0;

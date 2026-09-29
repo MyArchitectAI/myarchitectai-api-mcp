@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -9,9 +9,11 @@ import { ConfigError } from './errors.js';
 import { logEvent } from './logger.js';
 import { MediaService } from './media.js';
 import { RemoteMediaService } from './remote-media.js';
-import { createRemoteAuthenticator, type VerifiedIdentity } from './remote-auth.js';
+import { createRemoteAuthenticator, RemoteAuthenticationUnavailableError,
+  type VerifiedIdentity } from './remote-auth.js';
 import { validateRemoteHttpConfig, type RemoteHttpConfig } from './remote-config.js';
-import { RemoteSessionCapacityError, RemoteSessionRegistry } from './remote-session.js';
+import { RemoteSessionCapacityError, RemoteSessionRegistry, RemoteSessionUnavailableError,
+  type RemoteSessionLease, type RemoteSessionProvider } from './remote-session.js';
 import { registerTools } from './tools.js';
 
 export type ResolveAccount = (
@@ -19,8 +21,8 @@ export type ResolveAccount = (
   context: { signal: AbortSignal },
 ) => Config | undefined | Promise<Config | undefined>;
 export type RemoteErrorEvent = {
-  fingerprint: 'remote.account_lookup' | 'remote.request' | 'remote.timeout';
-  route: '/mcp';
+  fingerprint: 'remote.auth' | 'remote.account_lookup' | 'remote.request' | 'remote.timeout' | 'remote.health';
+  route: '/mcp' | '/health/deep';
   status: number;
   requestId: string;
 };
@@ -28,10 +30,14 @@ export type RemoteErrorEvent = {
 export type RemoteServerOptions = {
   auth: RemoteHttpConfig & { jwks?: JWTVerifyGetKey };
   resolveAccount: ResolveAccount;
-  sessions?: RemoteSessionRegistry;
+  sessions?: RemoteSessionProvider;
   createClient?: (config: Config) => MyArchitectAIClient;
   createMedia?: (config: Config) => MediaService;
   onError?: (event: RemoteErrorEvent) => void;
+  checkHealth?: (signal?: AbortSignal) => Promise<{
+    status: 'ok' | 'unavailable';
+    checks: { account: boolean; jwks: boolean; redis: boolean };
+  }>;
 };
 
 class RequestBodyError extends Error {
@@ -51,6 +57,15 @@ const sendJson = (response: ServerResponse, status: number, body: Record<string,
 const methodNotAllowed = (response: ServerResponse, allow: 'GET' | 'POST'): void => {
   response.setHeader('allow', allow);
   sendJson(response, 405, { error: 'Method not allowed' });
+};
+
+const healthTokenMatches = (expected: string | undefined, provided: string | string[] | undefined): boolean => {
+  if (!expected || typeof provided !== 'string') {
+    return false;
+  }
+  const expectedDigest = createHash('sha256').update(expected).digest();
+  const providedDigest = createHash('sha256').update(provided).digest();
+  return timingSafeEqual(expectedDigest, providedDigest);
 };
 
 const readJsonBody = (request: IncomingMessage, maxBytes: number, signal: AbortSignal): Promise<unknown> => new Promise((resolve, reject) => {
@@ -140,7 +155,9 @@ const awaitUntilAbort = <T>(work: Promise<T>, signal: AbortSignal): Promise<T> =
   );
 });
 
-export const createRemoteServer = (options: RemoteServerOptions): Server => {
+export type RemoteHandler = (request: IncomingMessage, response: ServerResponse) => Promise<void>;
+
+export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler => {
   if (typeof options.resolveAccount !== 'function') {
     throw new ConfigError('resolveAccount is required for remote MCP');
   }
@@ -163,7 +180,7 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
     }
   };
 
-  return createServer((request, response) => {
+  return async (request, response) => {
     const started = Date.now();
     const requestId = randomUUID();
     response.setHeader('x-request-id', requestId);
@@ -219,11 +236,24 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
           methodNotAllowed(response, 'GET');
           return;
         }
-        if (route === '/health/deep' && config.healthToken && request.headers['x-obs-token'] !== config.healthToken) {
-          sendJson(response, 401, { error: 'Unauthorized' });
+        if (route === '/health/deep') {
+          if (!healthTokenMatches(config.healthToken, request.headers['x-obs-token']) || !options.checkHealth) {
+            sendJson(response, 404, { error: 'Not found' });
+            return;
+          }
+          try {
+            const result = await options.checkHealth(abortController.signal);
+            sendJson(response, result.status === 'ok' ? 200 : 503,
+              { status: result.status, scope: 'dependencies', checks: result.checks });
+          } catch {
+            capture({ fingerprint: 'remote.health', route: '/health/deep', status: 503, requestId });
+            sendJson(response, 503, { status: 'unavailable', scope: 'dependencies',
+              checks: { account: false, jwks: false, redis: false } });
+          }
           return;
         }
-        sendJson(response, 200, { status: 'ok', scope: 'process' });
+        sendJson(response, 200, { status: 'ok', scope: 'process',
+          ...(config.deploymentRevision === undefined ? {} : { revision: config.deploymentRevision }) });
         return;
       }
       if (route === '/.well-known/oauth-protected-resource') {
@@ -278,8 +308,13 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
         let identity: VerifiedIdentity;
         try {
           identity = await awaitUntilAbort(authenticate(request), abortController.signal);
-        } catch {
+        } catch (error) {
           if (isAdmissionAborted()) {
+            return;
+          }
+          if (error instanceof RemoteAuthenticationUnavailableError) {
+            capture({ fingerprint: 'remote.auth', route: '/mcp', status: 503, requestId });
+            sendJson(response, 503, { error: 'Authentication unavailable' });
             return;
           }
           response.setHeader('www-authenticate', `Bearer resource_metadata="${config.metadataUrl}", scope="openid"`);
@@ -328,12 +363,33 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
           sendJson(response, 403, { error: 'Account not linked' });
           return;
         }
-        const lease = sessions.acquire({ issuer: identity.issuer, subject: identity.subject });
+        const acquire = Promise.resolve(sessions.acquire({ issuer: identity.issuer, subject: identity.subject }));
+        let leaseOwnedByRequest = false;
+        void acquire.then((lateLease) => {
+          if (isAdmissionAborted() && !leaseOwnedByRequest) {
+            void Promise.resolve(lateLease.release()).catch(() => {
+              capture({ fingerprint: 'remote.request', route: '/mcp', status: 503, requestId });
+            });
+          }
+        }, () => undefined);
+        let lease: RemoteSessionLease;
+        try {
+          lease = await awaitUntilAbort(acquire, abortController.signal);
+          leaseOwnedByRequest = true;
+        } catch (error) {
+          if (isAdmissionAborted()) {
+            return;
+          }
+          throw error;
+        }
         const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
         // The 1.29 SDK types conflict with exactOptionalPropertyTypes; omitting
         // sessionIdGenerator is its documented stateless runtime mode.
         const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
         try {
+          if (isAdmissionAborted()) {
+            return;
+          }
           registerTools(server, { client: createClient(account), session: lease.session, media: createMedia(account), config: account, mode: 'remote' });
           if (isAdmissionAborted()) {
             return;
@@ -348,11 +404,11 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
           try {
             await server.close();
           } finally {
-            lease.release();
+            await lease.release();
           }
         }
       } catch (error) {
-        if (error instanceof RemoteSessionCapacityError) {
+        if (error instanceof RemoteSessionCapacityError || error instanceof RemoteSessionUnavailableError) {
           capture({ fingerprint: 'remote.request', route: '/mcp', status: 503, requestId });
           sendJson(response, 503, { error: 'Server busy' });
           return;
@@ -364,11 +420,13 @@ export const createRemoteServer = (options: RemoteServerOptions): Server => {
         activeRequests--;
       }
     };
-    void processRequest().catch(() => {
+    await processRequest().catch(() => {
       if (route === '/mcp') {
         capture({ fingerprint: 'remote.request', route: '/mcp', status: 500, requestId });
       }
       sendJson(response, 500, { error: 'Internal server error' });
     });
-  });
+  };
 };
+
+export const createRemoteServer = (options: RemoteServerOptions): Server => createServer(createRemoteHandler(options));

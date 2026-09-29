@@ -1,0 +1,29 @@
+# Hosted MCP runtime
+
+The company Vercel entrypoint is `src/server.ts`; the published package's stdio entrypoint remains `dist/index.js`. See [DEPLOYMENT.md](DEPLOYMENT.md) for project settings and the complete environment-variable list. This repository prepares the runtime without creating a project, provisioning credentials, activating billing or publishing a connector. No preview environment is provided.
+
+## Identity and charging
+
+The hosted runtime derives its OAuth issuer and JWKS URL from `PORTAL_SUPABASE_URL`. That must be the API Portal's Supabase project: the verified OAuth subject is matched directly to `clients.user_id`, without an email-based account bridge. Tokens must also satisfy the resource audience and approved OAuth client-ID checks described in [REMOTE-CONNECTOR.md](REMOTE-CONNECTOR.md). OAuth consent, the client-specific audience hook and real connection acceptance remain launch work.
+
+`MCP_BILLING_MODE=api-balance` is required explicitly. Website subscription credits are not implemented, and deployment preparation does not settle that product decision. `MCP_PORTAL_KEY_BINDINGS` maps an exact lowercase Supabase user ID to a positive numeric `api_keys.id`; it contains IDs, never secret key values. Operators must select an account owner's intended key explicitly. An empty map admits no customer; the runtime never picks the first available key. This initial binding mechanism requires a self-service selection and consent flow before a general directory launch.
+
+Every authenticated request checks the current portal client and selected key's ownership and deletion status, then retrieves the matching enabled AWS API Gateway key. Missing, ambiguous, foreign, deleted or disabled mappings are refused. No key value or enabled-status result is cached across requests. Upstream reads have deadlines and response-size limits, propagate cancellation and reject redirects. The returned key is used only for that account's existing API contract; the hosted runtime does not read `MYARCHITECTAI_API_KEY` as a fallback.
+
+Use company-owned credentials stored in the company's secret manager and Vercel Production settings. The portal service-role credential is privileged: restrict project access, never expose it to a client and rotate it through the company's existing process. AWS permissions need only `apigateway:GET` for the explicitly selected key resources, such as `arn:aws:apigateway:eu-central-1::/apikeys/<AWS-key-ID>`; they do not need key creation, modification, deletion or key-list permissions. This follows the documented [GetApiKey operation](https://docs.aws.amazon.com/apigateway/latest/api/API_GetApiKey.html) and [API Gateway IAM resource types](https://docs.aws.amazon.com/service-authorization/latest/reference/list_apigateway.html).
+
+## Shared history and limits
+
+Hosted history uses company-owned Upstash Redis, the fixed `myarchitectai:mcp:production` namespace and a separate random HMAC secret of at least 32 characters. User keys derive from the verified issuer and subject. Atomic updates keep concurrent function instances consistent. The store retains up to 100 recent records with a 30-minute idle expiry and a 1 MB serialized-state bound; older records may be evicted earlier. Ordinary history reads and writes refresh expiry. Rotating the HMAC secret makes prior keys inaccessible to the runtime until their existing expiry; it is not immediate deletion from provider backups.
+
+Admission checks storage availability before dispatching a tool. If history persistence fails after a successful paid response, the tool still returns that success and emits a sanitized error. History reads fail honestly when storage is unavailable. The runtime does not use filesystem persistence or expose `save_image`; inline previews are limited to 1 MB before base64 encoding. See the processing record in [REMOTE-CONNECTOR.md](REMOTE-CONNECTOR.md) for stored fields and privacy limitations.
+
+The Vercel function duration is configured to 300 seconds; the HTTP boundary and upstream API client have shorter deadlines. The hosted listener registers in-flight work with Vercel so response completion or disconnection does not immediately discard the pending handler. This is bounded function execution, not durable background-job delivery: a platform termination or deadline can still interrupt work. A lost response may follow a charged generation; check the account's history and underlying API outcome before retrying.
+
+## Health and company monitoring
+
+Public `/health` reports process status and the deployment revision. The production verifier checks that revision and the public authentication boundary; it does not establish a usable OAuth connection or successful billing.
+
+`/health/deep` requires `OBS_HEALTH_TOKEN` in `X-Obs-Token`; without the configured token it returns 404. Its bounded, cached dependency check covers the first explicitly bound account as a representative portal/AWS probe, authorization-server JWKS, and Redis availability. It sends no paid generation request and does not certify every customer mapping. With no selected account binding it reports `unavailable`. Redis health probes do not refresh customer-history expiry. Configure a company monitor to inspect this endpoint after launch; the preparation change does not create a monitor or send traffic to this development host's observability services.
+
+Boundary and dependency failures use sanitized structured events. No bearer token, API key, subject, signing material, prompt, output URL or upstream body belongs in a log. External error capture and product analytics remain disabled until the company configures its destinations and agrees the event taxonomy. Local verification uses synthetic identities, signing keys and upstream responses: no company credentials, production rows, paid calls or telemetry sends are needed.

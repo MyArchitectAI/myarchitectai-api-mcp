@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { type Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type KeyLike } from 'jose';
+import { createLocalJWKSet, errors, exportJWK, generateKeyPair, SignJWT,
+  type KeyLike } from 'jose';
 import { createRemoteServer } from '../src/remote.js';
 
 const resource = 'https://mcp.example.com/mcp';
@@ -112,5 +113,48 @@ describe('remote bearer authentication', () => {
       assert.equal(response.status, 401);
     }
     assert.equal((await post(`Bearer ${valid}`)).status, 403);
+  });
+
+  it('returns 503 before account or tool work when JWKS is unavailable, while an unknown key remains 401', async () => {
+    let lookups = 0;
+    let clients = 0;
+    const capturedErrors: Array<{ fingerprint: string; status: number }> = [];
+    let failAsUnknownKey = false;
+    const unavailableServer = createRemoteServer({
+      auth: { canonicalResource: resource, issuer, allowedOAuthClientIds: [clientId],
+        allowedHosts: ['127.0.0.1'], jwks: async () => {
+          if (failAsUnknownKey) {
+            throw new errors.JWKSNoMatchingKey();
+          }
+          throw new Error('synthetic JWKS outage details');
+        } },
+      resolveAccount: () => { lookups++; return undefined; },
+      createClient: () => { clients++; throw new Error('unexpected client creation'); },
+      onError: (event) => { capturedErrors.push(event); },
+    });
+    unavailableServer.listen(0, '127.0.0.1');
+    await once(unavailableServer, 'listening');
+    const address = unavailableServer.address();
+    assert.ok(address && typeof address !== 'string');
+    const url = `http://127.0.0.1:${address.port}/mcp`;
+    const send = (token?: string) => fetch(url, { method: 'POST',
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: requestBody });
+    try {
+      const unavailable = await send(await sign());
+      assert.equal(unavailable.status, 503);
+      assert.deepEqual(await unavailable.json(), { error: 'Authentication unavailable' });
+      assert.equal(unavailable.headers.get('www-authenticate'), null);
+      assert.deepEqual(capturedErrors.map(({ fingerprint, status }) => ({ fingerprint, status })),
+        [{ fingerprint: 'remote.auth', status: 503 }]);
+      assert.equal((await send()).status, 401);
+      failAsUnknownKey = true;
+      const unknownKey = await send(await sign());
+      assert.equal(unknownKey.status, 401);
+      assert.match(unknownKey.headers.get('www-authenticate') ?? '', /^Bearer /);
+      assert.deepEqual([lookups, clients], [0, 0]);
+    } finally {
+      await new Promise<void>((resolve) => unavailableServer.close(() => resolve()));
+    }
   });
 });

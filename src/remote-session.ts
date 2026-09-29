@@ -1,12 +1,25 @@
-import { SessionStore } from './session.js';
+import { SessionStore, type SessionHistory } from './session.js';
 
 /** The HTTP boundary must derive both fields from a verified bearer token. */
 export type RemoteIdentity = Readonly<{ issuer: string; subject: string }>;
 
 export type RemoteSessionLease = Readonly<{
-  session: SessionStore;
-  release: () => void;
+  session: SessionHistory;
+  release: () => void | Promise<void>;
 }>;
+
+export type RemoteSessionProvider = {
+  acquire(identity: RemoteIdentity): RemoteSessionLease | Promise<RemoteSessionLease>;
+};
+
+type LocalRemoteSessionLease = Readonly<{ session: SessionStore; release: () => void }>;
+
+export class RemoteSessionUnavailableError extends Error {
+  constructor() {
+    super('Remote generation history is unavailable.');
+    this.name = 'RemoteSessionUnavailableError';
+  }
+}
 
 type Entry = {
   session: SessionStore;
@@ -49,7 +62,7 @@ export class RemoteSessionRegistry {
   }
 
   /** Acquires a per-user store; release exactly once after the request completes. */
-  acquire(identity: RemoteIdentity): RemoteSessionLease {
+  acquire(identity: RemoteIdentity): LocalRemoteSessionLease {
     if (!identity.issuer || !identity.subject) {
       throw new TypeError('Verified issuer and subject are required.');
     }

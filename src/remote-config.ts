@@ -11,6 +11,7 @@ export type RemoteHttpConfig = {
   requestTimeoutMs?: number;
   maxConcurrentRequests?: number;
   healthToken?: string;
+  deploymentRevision?: string;
 };
 
 export type ValidatedRemoteHttpConfig = {
@@ -27,6 +28,7 @@ export type ValidatedRemoteHttpConfig = {
   requestTimeoutMs: number;
   maxConcurrentRequests: number;
   healthToken?: string;
+  deploymentRevision?: string;
 };
 
 const positiveInteger = (value: number | undefined, fallback: number, name: string): number => {
@@ -87,6 +89,9 @@ export const validateRemoteHttpConfig = (input: RemoteHttpConfig): ValidatedRemo
   if (input.healthToken !== undefined && (!input.healthToken.trim() || input.healthToken !== input.healthToken.trim())) {
     throw new ConfigError('healthToken must be a nonempty exact token when configured');
   }
+  if (input.deploymentRevision !== undefined && !/^[0-9a-f]{40}$/.test(input.deploymentRevision)) {
+    throw new ConfigError('deploymentRevision must be an exact lowercase 40-character Git SHA');
+  }
   const metadataPath = `/.well-known/oauth-protected-resource${resource.pathname}`;
   return {
     canonicalResource: resource.href,
@@ -102,5 +107,6 @@ export const validateRemoteHttpConfig = (input: RemoteHttpConfig): ValidatedRemo
     requestTimeoutMs: positiveInteger(input.requestTimeoutMs, 180_000, 'requestTimeoutMs'),
     maxConcurrentRequests: positiveInteger(input.maxConcurrentRequests, 32, 'maxConcurrentRequests'),
     ...(input.healthToken === undefined ? {} : { healthToken: input.healthToken }),
+    ...(input.deploymentRevision === undefined ? {} : { deploymentRevision: input.deploymentRevision }),
   };
 };

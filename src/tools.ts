@@ -14,7 +14,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { apiKeyFingerprint, type Config } from './config.js';
 import type { GenerationResult, MyArchitectAIClient } from './client.js';
 import { classifyImageInput, describeSource, MediaService, openInBrowser, resolveLocalPath } from './media.js';
-import type { SessionStore } from './session.js';
+import type { SessionHistory } from './session.js';
 import { MyArchitectAIError } from './errors.js';
 import {
   animateShape,
@@ -43,7 +43,7 @@ import {
 
 export interface ToolDeps {
   client: MyArchitectAIClient;
-  session: SessionStore;
+  session: SessionHistory;
   media: MediaService;
   config: Config;
   mode?: 'stdio' | 'remote';
@@ -144,17 +144,22 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
     outputSchema: autoPromptOutputShape,
     annotations: GENERATION_ANNOTATIONS,
   }, async (args) => {
+    let result;
     try {
-      const result = await deps.client.autoPrompt(args);
-      await deps.session.record({ tool: 'auto_prompt', ...result, output: [result.output], outputType: 'text' });
-      return {
-        content: [{ type: 'text', text: `${result.output}\n\nCost: $${formatNumber(result.cost)} USD · Balance: $${formatNumber(result.balance)} USD${requestIdNote(result.requestId)}` }],
-        structuredContent: { ...result },
-      };
+      result = await deps.client.autoPrompt(args);
     } catch (err) {
-      recordFailure(deps, err);
+      await recordFailure(deps, err);
       return formatError('Auto prompt', err, deps.mode);
     }
+    try {
+      await deps.session.record({ tool: 'auto_prompt', ...result, output: [result.output], outputType: 'text' });
+    } catch {
+      // A paid result must reach the caller; the store captures its own error.
+    }
+    return {
+      content: [{ type: 'text', text: `${result.output}\n\nCost: $${formatNumber(result.cost)} USD · Balance: $${formatNumber(result.balance)} USD${requestIdNote(result.requestId)}` }],
+      structuredContent: { ...result },
+    };
   });
 
   server.registerTool('balance', {
@@ -165,7 +170,7 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
   }, async () => {
     try {
       const result = await deps.client.balance();
-      deps.session.updateBalance(result.balance);
+      await deps.session.updateBalance(result.balance);
       return { content: [{ type: 'text', text: `Account balance: $${formatNumber(result.balance)} USD` }], structuredContent: { ...result } };
     } catch (err) {
       return formatError('Balance check', err, deps.mode);
@@ -306,7 +311,12 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () => {
-      const summary = deps.session.summary();
+      let summary;
+      try {
+        summary = await deps.session.summary();
+      } catch (err) {
+        return formatError('Usage summary', err, deps.mode);
+      }
       const fingerprint = deps.mode === 'remote' ? undefined : apiKeyFingerprint(deps.config.apiKey);
       const lines = [
         ...(fingerprint === undefined ? [] : [`API key: ${fingerprint}`]),
@@ -345,7 +355,12 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ limit }) => {
-      const generations = deps.session.recent(limit ?? 10);
+      let generations;
+      try {
+        generations = await deps.session.recent(limit ?? 10);
+      } catch (err) {
+        return formatError('Recent generations', err, deps.mode);
+      }
       const lines = generations.length
         ? generations.map(
             (record) =>
@@ -365,8 +380,16 @@ async function generate(
   label: string,
   body: Record<string, unknown>,
 ): Promise<CallToolResult> {
+  let result;
   try {
-    const result = await deps.client.generate(path, body);
+    result = await deps.client.generate(path, body);
+  } catch (err) {
+    // Count API/validation rejections (not transport errors), preserving any
+    // balance the API reported without masking the original API error.
+    await recordFailure(deps, err);
+    return formatError(label, err, deps.mode);
+  }
+  try {
     await deps.session.record({
       tool: toolName,
       output: result.output,
@@ -375,18 +398,19 @@ async function generate(
       ...(result.requestId !== undefined ? { requestId: result.requestId } : {}),
       outputType: toolName === 'animate' ? 'video' : 'image',
     });
-    return formatSuccess(label, result, toolName === 'animate' ? 'video' : 'image');
-  } catch (err) {
-    // Count API/validation rejections (not transport errors) and capture any
-    // balance the API reported on the failed call.
-    recordFailure(deps, err);
-    return formatError(label, err, deps.mode);
+  } catch {
+    // A paid result must reach the caller; the store captures its own error.
   }
+  return formatSuccess(label, result, toolName === 'animate' ? 'video' : 'image');
 }
 
-function recordFailure(deps: ToolDeps, err: unknown): void {
+async function recordFailure(deps: ToolDeps, err: unknown): Promise<void> {
   if (err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
-    deps.session.recordFailure(err.balance);
+    try {
+      await deps.session.recordFailure(err.balance);
+    } catch {
+      // Preserve the original API rejection when shared history fails.
+    }
   }
 }
 

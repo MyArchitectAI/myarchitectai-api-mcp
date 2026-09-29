@@ -30,6 +30,15 @@ export interface UsageSummary {
   since: string | null;
 }
 
+/** The same tool contract supports a local store and an asynchronous shared store. */
+export type SessionHistory = {
+  record(entry: Omit<GenerationRecord, 'id' | 'createdAt'>): GenerationRecord | Promise<GenerationRecord>;
+  recordFailure(balance?: number): void | Promise<void>;
+  updateBalance(balance: number): void | Promise<void>;
+  recent(limit?: number): GenerationRecord[] | Promise<GenerationRecord[]>;
+  summary(): UsageSummary | Promise<UsageSummary>;
+};
+
 export class SessionStore {
   #records: GenerationRecord[] = [];
   #seq = 0;
