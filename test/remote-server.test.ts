@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { describe, it } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -62,17 +62,51 @@ const fixture = async (overrides: Partial<RemoteServerOptions> = {}, useHandler 
   const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
   const request = (path: '/mcp' | '/health' | '/health/deep' | '/.well-known/oauth-protected-resource',
     init?: RequestInit): Promise<Response> => {
-    const requestInit: RequestInit = { ...init, redirect: 'error' };
     switch (path) {
       case '/mcp':
-        return fetch(`http://127.0.0.1:${address.port}/mcp`, requestInit);
       case '/health':
-        return fetch(`http://127.0.0.1:${address.port}/health`, requestInit);
       case '/health/deep':
-        return fetch(`http://127.0.0.1:${address.port}/health/deep`, requestInit);
       case '/.well-known/oauth-protected-resource':
-        return fetch(`http://127.0.0.1:${address.port}/.well-known/oauth-protected-resource`, requestInit);
+        break;
+      default:
+        throw new Error('Invalid synthetic request route');
     }
+    return new Promise<Response>((resolve, reject) => {
+      if (init?.body != null && typeof init.body !== 'string') {
+        throw new Error('Synthetic request body must be text');
+      }
+      const headers: Record<string, string> = {};
+      new Headers(init?.headers).forEach((value, name) => { headers[name] = value; });
+      const outgoing = httpRequest({ protocol: 'http:', hostname: '127.0.0.1', port: address.port,
+        path, method: init?.method ?? 'GET', headers, signal: init?.signal ?? undefined }, (incoming) => {
+        if (incoming.statusCode && incoming.statusCode >= 300 && incoming.statusCode < 400) {
+          incoming.resume();
+          reject(new Error('Synthetic request redirected'));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        incoming.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+        incoming.on('error', reject);
+        incoming.on('end', () => {
+          const responseHeaders = new Headers();
+          for (const [name, value] of Object.entries(incoming.headers)) {
+            if (typeof value === 'string') {
+              responseHeaders.append(name, value);
+            } else if (Array.isArray(value)) {
+              for (const item of value) {
+                responseHeaders.append(name, item);
+              }
+            }
+          }
+          const status = incoming.statusCode ?? 500;
+          const body = status === 204 || status === 205 || status === 304
+            ? null : Buffer.concat(chunks).toString();
+          resolve(new Response(body, { status, headers: responseHeaders }));
+        });
+      });
+      outgoing.on('error', reject);
+      outgoing.end(init?.body ?? undefined);
+    });
   };
   const token = async (subject: string) => new SignJWT({ client_id: 'trusted-client' })
     .setProtectedHeader({ alg: 'ES256' }).setIssuer(issuer).setAudience(resource)
