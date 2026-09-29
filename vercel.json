@@ -6,7 +6,7 @@
     "deploymentEnabled": false
   },
   "functions": {
-    "src/server.ts": {
+    "server.ts": {
       "maxDuration": 300
     }
   }

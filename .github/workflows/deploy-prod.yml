@@ -66,7 +66,7 @@ jobs:
       - name: Check published API contract
         run: npm run api:check:live
 
-      # Native src/server.ts support landed after the older CLI pin used by the
+      # Native root server.ts support landed after the older CLI pin used by the
       # main app; this exact version is present on npm and runs on Node 24.
       - name: Install pinned Vercel CLI
         run: npm install --global vercel@61.0.0

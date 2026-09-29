@@ -1,6 +1,6 @@
 # Hosted MCP runtime
 
-The company Vercel entrypoint is `src/server.ts`; the published package's stdio entrypoint remains `dist/index.js`. See [DEPLOYMENT.md](DEPLOYMENT.md) for project settings and the complete environment-variable list. This repository prepares the runtime without creating a project, provisioning credentials, activating billing or publishing a connector. No preview environment is provided.
+The company Vercel entrypoint is the root `server.ts` shim, which imports `src/server.ts`; the published package's stdio entrypoint remains `dist/index.js`. See [DEPLOYMENT.md](DEPLOYMENT.md) for project settings and the complete environment-variable list. This repository prepares the runtime without creating a project, provisioning credentials, activating billing or publishing a connector. No preview environment is provided.
 
 ## Identity and charging
 

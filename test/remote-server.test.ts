@@ -56,18 +56,23 @@ const fixture = async (overrides: Partial<RemoteServerOptions> = {}, useHandler 
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
+  if (!Number.isInteger(address.port) || address.port < 1 || address.port > 65_535) {
+    throw new Error('Invalid synthetic server port');
+  }
   const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
-  const paths = new Set(['/mcp', '/health', '/health/deep', '/.well-known/oauth-protected-resource']);
-  const request = (path: string, init?: RequestInit): Promise<Response> => {
-    if (!paths.has(path)) {
-      throw new Error('Unexpected synthetic route');
+  const request = (path: '/mcp' | '/health' | '/health/deep' | '/.well-known/oauth-protected-resource',
+    init?: RequestInit): Promise<Response> => {
+    const requestInit: RequestInit = { ...init, redirect: 'error' };
+    switch (path) {
+      case '/mcp':
+        return fetch(`http://127.0.0.1:${address.port}/mcp`, requestInit);
+      case '/health':
+        return fetch(`http://127.0.0.1:${address.port}/health`, requestInit);
+      case '/health/deep':
+        return fetch(`http://127.0.0.1:${address.port}/health/deep`, requestInit);
+      case '/.well-known/oauth-protected-resource':
+        return fetch(`http://127.0.0.1:${address.port}/.well-known/oauth-protected-resource`, requestInit);
     }
-    const target = new URL(path, endpoint);
-    if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' ||
-        Number(target.port) !== address.port || target.username || target.password || target.search || target.hash) {
-      throw new Error('Synthetic request must stay on the local test server');
-    }
-    return fetch(target, init);
   };
   const token = async (subject: string) => new SignJWT({ client_id: 'trusted-client' })
     .setProtectedHeader({ alg: 'ES256' }).setIssuer(issuer).setAudience(resource)
