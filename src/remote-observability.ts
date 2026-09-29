@@ -7,7 +7,7 @@ export type ExternalFetchOptions = Readonly<{
   operation: string;
   /** The caller enforces this deadline through response-body consumption. */
   timeoutMs: number;
-  maxAttempts: number;
+  maxAttempts: 1;
 }>;
 
 type EmitEvent = typeof logEvent;
@@ -19,7 +19,7 @@ export const instrumentExternalFetch = (
   emit: EmitEvent = logEvent,
 ): typeof fetch => {
   if (!/^[a-z][a-z0-9_]{0,63}$/.test(options.operation) ||
-      !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.maxAttempts !== 1) {
+      !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || !hasSingleAttemptPolicy(options.maxAttempts)) {
     throw new Error('Invalid external fetch instrumentation policy');
   }
   return async (input, init) => {
@@ -50,3 +50,5 @@ export const instrumentExternalFetch = (
     return response;
   };
 };
+
+const hasSingleAttemptPolicy = (maxAttempts: number): boolean => maxAttempts === 1;
