@@ -20,22 +20,20 @@ export type HostedConfig = Readonly<{
   history: UpstashRemoteHistoryOptions;
 }>;
 
-const required = (env: NodeJS.ProcessEnv, name: string): string => {
-  const value = env[name];
+const required = (value: string | undefined, name: string): string => {
   if (!value || !value.trim() || value !== value.trim()) {
     throw new ConfigError(`${name} is required`);
   }
   return value;
 };
 
-const jsonArray = (env: NodeJS.ProcessEnv, name: string, optional = false): string[] => {
-  const raw = env[name];
+const jsonArray = (raw: string | undefined, name: string, optional = false): string[] => {
   if (raw === undefined && optional) {
     return [];
   }
   let value: unknown;
   try {
-    value = JSON.parse(required(env, name)) as unknown;
+    value = JSON.parse(required(raw, name)) as unknown;
   } catch {
     throw new ConfigError(`${name} must be a JSON array of strings`);
   }
@@ -46,10 +44,27 @@ const jsonArray = (env: NodeJS.ProcessEnv, name: string, optional = false): stri
   return value as string[];
 };
 
+const isLowercaseUuid = (value: string): boolean => {
+  if (value.length !== 36) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (index === 8 || index === 13 || index === 18 || index === 23) {
+      if (code !== 45) {
+        return false;
+      }
+    } else if (!((code >= 48 && code <= 57) || (code >= 97 && code <= 102))) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const keyBindings = (env: NodeJS.ProcessEnv): ReadonlyMap<string, number> => {
   let value: unknown;
   try {
-    value = JSON.parse(required(env, 'MCP_PORTAL_KEY_BINDINGS')) as unknown;
+    value = JSON.parse(required(env.MCP_PORTAL_KEY_BINDINGS, 'MCP_PORTAL_KEY_BINDINGS')) as unknown;
   } catch {
     throw new ConfigError('MCP_PORTAL_KEY_BINDINGS must be a JSON object');
   }
@@ -58,7 +73,7 @@ const keyBindings = (env: NodeJS.ProcessEnv): ReadonlyMap<string, number> => {
   }
   const bindings = new Map<string, number>();
   for (const [subject, id] of Object.entries(value)) {
-    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(subject) ||
+    if (!isLowercaseUuid(subject) ||
         typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) {
       throw new ConfigError('MCP_PORTAL_KEY_BINDINGS must map exact lowercase user IDs to positive key IDs');
     }
@@ -86,20 +101,20 @@ export const parseHostedConfig = (env: NodeJS.ProcessEnv): HostedConfig => {
   if (env.MCP_BILLING_MODE !== 'api-balance') {
     throw new ConfigError('MCP_BILLING_MODE must explicitly be api-balance');
   }
-  const supabaseUrl = portalOrigin(required(env, 'PORTAL_SUPABASE_URL'));
+  const supabaseUrl = portalOrigin(required(env.PORTAL_SUPABASE_URL, 'PORTAL_SUPABASE_URL'));
   const issuer = `${supabaseUrl}/auth/v1`;
-  const awsRegion = required(env, 'AWS_REGION');
+  const awsRegion = required(env.AWS_REGION, 'AWS_REGION');
   if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(awsRegion)) {
     throw new ConfigError('AWS_REGION must be a valid API Gateway region');
   }
-  const revision = required(env, 'MCP_DEPLOYMENT_REVISION');
+  const revision = required(env.MCP_DEPLOYMENT_REVISION, 'MCP_DEPLOYMENT_REVISION');
   const auth: RemoteHttpConfig = {
     canonicalResource: env.MCP_CANONICAL_RESOURCE ?? DEFAULT_RESOURCE,
     issuer,
     jwksUrl: `${issuer}/.well-known/jwks.json`,
-    allowedOAuthClientIds: jsonArray(env, 'MCP_OAUTH_CLIENT_IDS'),
-    allowedHosts: jsonArray(env, 'MCP_ALLOWED_HOSTS', true),
-    allowedOrigins: jsonArray(env, 'MCP_ALLOWED_ORIGINS', true),
+    allowedOAuthClientIds: jsonArray(env.MCP_OAUTH_CLIENT_IDS, 'MCP_OAUTH_CLIENT_IDS'),
+    allowedHosts: jsonArray(env.MCP_ALLOWED_HOSTS, 'MCP_ALLOWED_HOSTS', true),
+    allowedOrigins: jsonArray(env.MCP_ALLOWED_ORIGINS, 'MCP_ALLOWED_ORIGINS', true),
     ...(env.OBS_HEALTH_TOKEN === undefined ? {} : { healthToken: env.OBS_HEALTH_TOKEN }),
     deploymentRevision: revision,
   };
@@ -107,17 +122,17 @@ export const parseHostedConfig = (env: NodeJS.ProcessEnv): HostedConfig => {
   const portal: PortalAccountOptions = {
     issuer,
     supabaseUrl,
-    serviceRoleKey: required(env, 'PORTAL_SUPABASE_SERVICE_ROLE_KEY'),
+    serviceRoleKey: required(env.PORTAL_SUPABASE_SERVICE_ROLE_KEY, 'PORTAL_SUPABASE_SERVICE_ROLE_KEY'),
     keyBindings: keyBindings(env),
     awsRegion,
-    awsAccessKeyId: required(env, 'AWS_ACCESS_KEY_ID'),
-    awsSecretAccessKey: required(env, 'AWS_SECRET_ACCESS_KEY'),
-    ...(env.AWS_SESSION_TOKEN ? { awsSessionToken: required(env, 'AWS_SESSION_TOKEN') } : {}),
+    awsAccessKeyId: required(env.AWS_ACCESS_KEY_ID, 'AWS_ACCESS_KEY_ID'),
+    awsSecretAccessKey: required(env.AWS_SECRET_ACCESS_KEY, 'AWS_SECRET_ACCESS_KEY'),
+    ...(env.AWS_SESSION_TOKEN ? { awsSessionToken: required(env.AWS_SESSION_TOKEN, 'AWS_SESSION_TOKEN') } : {}),
   };
   const history: UpstashRemoteHistoryOptions = {
-    restUrl: required(env, 'UPSTASH_REDIS_REST_URL'),
-    restToken: required(env, 'UPSTASH_REDIS_REST_TOKEN'),
-    keySecret: required(env, 'MCP_HISTORY_KEY_SECRET'),
+    restUrl: required(env.UPSTASH_REDIS_REST_URL, 'UPSTASH_REDIS_REST_URL'),
+    restToken: required(env.UPSTASH_REDIS_REST_TOKEN, 'UPSTASH_REDIS_REST_TOKEN'),
+    keySecret: required(env.MCP_HISTORY_KEY_SECRET, 'MCP_HISTORY_KEY_SECRET'),
     namespace: HISTORY_NAMESPACE,
     ttlSeconds: 1_800,
     maxRecordsPerUser: 100,

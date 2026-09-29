@@ -31,6 +31,12 @@ const isPositiveId = (value: unknown): value is number =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const ensureActive = (signal: AbortSignal): void => {
+  if (signal.aborted) {
+    throw new Error('Account lookup cancelled');
+  }
+};
+
 const readBoundedJson = async (response: Response, maxBytes: number): Promise<unknown> => {
   const advertised = response.headers.get('content-length');
   if (advertised !== null && Number(advertised) > maxBytes) {
@@ -42,17 +48,15 @@ const readBoundedJson = async (response: Response, maxBytes: number): Promise<un
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let bytes = 0;
-  while (true) {
-    const next = await reader.read();
-    if (next.done) {
-      break;
-    }
+  let next = await reader.read();
+  while (!next.done) {
     bytes += next.value.byteLength;
     if (bytes > maxBytes) {
       void reader.cancel();
       throw new Error('Account lookup response too large');
     }
     chunks.push(next.value);
+    next = await reader.read();
   }
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
@@ -68,20 +72,14 @@ const boundedJsonGet = async (
   signal: AbortSignal,
   maxBytes: number,
 ): Promise<unknown> => {
-  if (signal.aborted) {
-    throw new Error('Account lookup cancelled');
-  }
+  ensureActive(signal);
   const response = await fetcher(url, { method: 'GET', headers, signal, redirect: 'error' });
-  if (signal.aborted) {
-    throw new Error('Account lookup cancelled');
-  }
+  ensureActive(signal);
   if (!response.ok) {
     throw new Error('Account lookup unavailable');
   }
   const body = await readBoundedJson(response, maxBytes);
-  if (signal.aborted) {
-    throw new Error('Account lookup cancelled');
-  }
+  ensureActive(signal);
   return body;
 };
 

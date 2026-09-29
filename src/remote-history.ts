@@ -163,10 +163,14 @@ export class UpstashRemoteSessionProvider implements RemoteSessionProvider {
 
   async command(args: readonly (string | number)[], signal?: AbortSignal): Promise<unknown> {
     const controller = new AbortController();
-    const onAbort = (): void => controller.abort();
+    const onAbort = (): void => {
+      controller.abort();
+    };
     const timeout = setTimeout(onAbort, 5_000);
     signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) onAbort();
+    if (signal?.aborted) {
+      onAbort();
+    }
     try {
     const response = await this.#fetch(this.#url, {
       method: 'POST', headers: { authorization: `Bearer ${this.#token}`, 'content-type': 'application/json' },
@@ -179,15 +183,15 @@ export class UpstashRemoteSessionProvider implements RemoteSessionProvider {
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
     let size = 0;
-    while (true) {
-      const part = await reader.read();
-      if (part.done) break;
+    let part = await reader.read();
+    while (!part.done) {
       size += part.value.byteLength;
       if (size > MAX_RESPONSE_BYTES) {
         await reader.cancel();
         throw new Error('History REST response too large.');
       }
       chunks.push(part.value);
+      part = await reader.read();
     }
     const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     if (typeof body !== 'object' || body === null || !('result' in body) || 'error' in body) {

@@ -57,13 +57,25 @@ const fixture = async (overrides: Partial<RemoteServerOptions> = {}, useHandler 
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
+  const paths = new Set(['/mcp', '/health', '/health/deep', '/.well-known/oauth-protected-resource']);
+  const request = (path: string, init?: RequestInit): Promise<Response> => {
+    if (!paths.has(path)) {
+      throw new Error('Unexpected synthetic route');
+    }
+    const target = new URL(path, endpoint);
+    if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' ||
+        Number(target.port) !== address.port || target.username || target.password || target.search || target.hash) {
+      throw new Error('Synthetic request must stay on the local test server');
+    }
+    return fetch(target, init);
+  };
   const token = async (subject: string) => new SignJWT({ client_id: 'trusted-client' })
     .setProtectedHeader({ alg: 'ES256' }).setIssuer(issuer).setAudience(resource)
     .setSubject(subject).setExpirationTime('5m').sign(privateKey);
   const close = async (): Promise<void> => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };
-  return { server, endpoint, token, close, upstreamKeys, handlerRequests };
+  return { server, endpoint, request, token, close, upstreamKeys, handlerRequests };
 };
 
 const connect = async (endpoint: URL, token: string): Promise<Client> => {
@@ -119,26 +131,25 @@ describe('remote MCP HTTP boundary', () => {
     try {
       const auth = `Bearer ${await app.token('user-a')}`;
       for (const method of ['GET', 'DELETE']) {
-        const response = await fetch(app.endpoint, { method, headers: { authorization: auth } });
+        const response = await app.request('/mcp', { method, headers: { authorization: auth } });
         assert.equal(response.status, 405);
         assert.equal(response.headers.get('allow'), 'POST');
       }
-      const metadata = await fetch(new URL('/.well-known/oauth-protected-resource', app.endpoint), { method: 'POST' });
+      const metadata = await app.request('/.well-known/oauth-protected-resource', { method: 'POST' });
       assert.equal(metadata.status, 405);
       assert.equal(metadata.headers.get('allow'), 'GET');
-      const blockedOrigin = await fetch(app.endpoint, { method: 'POST',
+      const blockedOrigin = await app.request('/mcp', { method: 'POST',
         headers: { authorization: auth, origin: 'https://blocked.example', 'content-type': 'application/json' },
         body: '{}' });
       assert.equal(blockedOrigin.status, 403);
-      const oversized = await fetch(app.endpoint, { method: 'POST',
+      const oversized = await app.request('/mcp', { method: 'POST',
         headers: { authorization: auth, 'content-type': 'application/json' }, body: 'x'.repeat(2_001) });
       assert.equal(oversized.status, 413);
-      const malformed = await fetch(app.endpoint, { method: 'POST',
+      const malformed = await app.request('/mcp', { method: 'POST',
         headers: { authorization: auth, 'content-type': 'application/json' }, body: '{' });
       assert.equal(malformed.status, 400);
-      const deepUrl = new URL('/health/deep', app.endpoint);
-      assert.equal((await fetch(deepUrl)).status, 404);
-      const deep = await fetch(deepUrl, { headers: { 'x-obs-token': 'synthetic-observer-token' } });
+      assert.equal((await app.request('/health/deep')).status, 404);
+      const deep = await app.request('/health/deep', { headers: { 'x-obs-token': 'synthetic-observer-token' } });
       assert.deepEqual(await deep.json(), { status: 'ok', scope: 'dependencies',
         checks: { account: true, jwks: true, redis: true } });
       assert.deepEqual(app.upstreamKeys, []);
@@ -154,9 +165,9 @@ describe('remote MCP HTTP boundary', () => {
       healthToken: 'synthetic-observer-token' },
     checkHealth: async () => ({ status: 'ok', checks: { account: true, jwks: true, redis: true } }) }, true);
     try {
-      const health = await fetch(new URL('/health', app.endpoint));
+      const health = await app.request('/health');
       assert.deepEqual(await health.json(), { status: 'ok', scope: 'process', revision });
-      const deep = await fetch(new URL('/health/deep', app.endpoint), {
+      const deep = await app.request('/health/deep', {
         headers: { 'x-obs-token': 'synthetic-observer-token' },
       });
       assert.deepEqual(await deep.json(), { status: 'ok', scope: 'dependencies',
@@ -187,7 +198,7 @@ describe('remote MCP HTTP boundary', () => {
     });
     try {
       const auth = `Bearer ${await app.token('user-a')}`;
-      const post = () => fetch(app.endpoint, { method: 'POST',
+      const post = () => app.request('/mcp', { method: 'POST',
         headers: { authorization: auth, 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) });
       const first = post();
@@ -226,7 +237,7 @@ describe('remote MCP HTTP boundary', () => {
     });
     try {
       const signed = await app.token('user-a');
-      const timedOut = await fetch(app.endpoint, { method: 'POST',
+      const timedOut = await app.request('/mcp', { method: 'POST',
         headers: { authorization: `Bearer ${signed}`, 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) });
       assert.equal(timedOut.status, 504);
@@ -259,7 +270,7 @@ describe('remote MCP HTTP boundary', () => {
     };
     const app = await fixture({ sessions }, true);
     try {
-      const response = await fetch(app.endpoint, { method: 'POST',
+      const response = await app.request('/mcp', { method: 'POST',
         headers: { authorization: `Bearer ${await app.token('user-a')}`, 'content-type': 'application/json',
           accept: 'application/json, text/event-stream' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) });
@@ -305,7 +316,7 @@ describe('remote MCP HTTP boundary', () => {
       allowedOAuthClientIds: ['trusted-client'], requestTimeoutMs: 40 } }, true);
     try {
       const authorization = `Bearer ${await app.token('user-a')}`;
-      const post = () => fetch(app.endpoint, { method: 'POST',
+      const post = () => app.request('/mcp', { method: 'POST',
         headers: { authorization, 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) });
       assert.equal((await post()).status, 503);
@@ -326,21 +337,43 @@ describe('remote MCP HTTP boundary', () => {
   });
 
   it('retains completed generation history when the HTTP response times out mid-generation', async () => {
+    const awaitBarrier = async (barrier: Promise<void>, label: string): Promise<void> => {
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([barrier, new Promise<void>((_resolve, reject) => {
+          watchdog = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 2_000);
+        })]);
+      } finally {
+        if (watchdog) {
+          clearTimeout(watchdog);
+        }
+      }
+    };
     let releaseUpstream: (() => void) | undefined;
     let signalUpstreamStarted: (() => void) | undefined;
+    let signalTimeout: (() => void) | undefined;
     let generationCalls = 0;
     const upstreamGate = new Promise<void>((resolve) => { releaseUpstream = resolve; });
     const upstreamStarted = new Promise<void>((resolve) => { signalUpstreamStarted = resolve; });
+    const timeoutObserved = new Promise<void>((resolve) => { signalTimeout = resolve; });
     const app = await fixture({
       auth: { canonicalResource: resource, issuer, allowedOAuthClientIds: ['trusted-client'],
         requestTimeoutMs: 100, maxConcurrentRequests: 1 },
-      createClient: (config) => new MyArchitectAIClient(config, async () => {
-        generationCalls++;
-        signalUpstreamStarted?.();
-        await upstreamGate;
-        return new Response(JSON.stringify({ output: ['https://images.synthetic.test/finished.png'],
-          balance: 9, cost: 1 }), { status: 200, headers: { 'content-type': 'application/json' } });
-      }),
+      createClient: (config) => new class extends MyArchitectAIClient {
+        override async generate(path: string, body: Record<string, unknown>) {
+          assert.equal(path, '/text-to-image');
+          assert.equal(body.prompt, 'Synthetic pavilion');
+          generationCalls++;
+          signalUpstreamStarted?.();
+          await upstreamGate;
+          return { output: ['https://images.synthetic.test/finished.png'], balance: 9, cost: 1 };
+        }
+      }(config),
+      onError: (event) => {
+        if (event.fingerprint === 'remote.timeout') {
+          signalTimeout?.();
+        }
+      },
     }, true);
     try {
       const signed = await app.token('user-a');
@@ -350,21 +383,21 @@ describe('remote MCP HTTP boundary', () => {
         const call = client.callTool({ name: 'text_to_image', arguments: {
           prompt: 'Synthetic pavilion', outputFormat: 'png', outputWidth: 512, outputHeight: 512,
         } }).then(() => undefined, () => { callFailed = true; });
-        await upstreamStarted;
+        await awaitBarrier(upstreamStarted, 'generation dispatch');
         const generationWork = app.handlerRequests.at(-1);
         assert.ok(generationWork);
         let workSettled = false;
         void generationWork.then(() => { workSettled = true; });
-        await new Promise((resolve) => setTimeout(resolve, 160));
-        await call;
+        await awaitBarrier(timeoutObserved, 'HTTP request timeout');
+        await awaitBarrier(call, 'timed-out client response');
         assert.equal(callFailed, true);
         assert.equal(workSettled, false);
-        const busy = await fetch(app.endpoint, { method: 'POST',
+        const busy = await app.request('/mcp', { method: 'POST',
           headers: { authorization: `Bearer ${signed}`, 'content-type': 'application/json' },
           body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' }) });
         assert.equal(busy.status, 503);
         releaseUpstream?.();
-        await generationWork;
+        await awaitBarrier(generationWork, 'generation cleanup');
         assert.equal(workSettled, true);
         assert.equal(generationCalls, 1);
         const historyClient = await connect(app.endpoint, signed);

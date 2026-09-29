@@ -7,7 +7,7 @@ export type ExternalFetchOptions = Readonly<{
   operation: string;
   /** The caller enforces this deadline through response-body consumption. */
   timeoutMs: number;
-  maxAttempts: 1;
+  maxAttempts: number;
 }>;
 
 type EmitEvent = typeof logEvent;

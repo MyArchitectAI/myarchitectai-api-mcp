@@ -37,17 +37,15 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  while (true) {
-    const part = await reader.read();
-    if (part.done) {
-      break;
-    }
+  let part = await reader.read();
+  while (!part.done) {
     size += part.value.byteLength;
     if (size > JWKS_MAX_BYTES) {
       void reader.cancel();
       throw new Error('JWKS response too large.');
     }
     chunks.push(part.value);
+    part = await reader.read();
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 };
@@ -76,6 +74,15 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
 
   const probe = async (callerSignal?: AbortSignal): Promise<{ result: HostedHealthResult; cancelled: boolean }> => {
     const checks = { account: false, jwks: false, redis: false };
+    const markHealthy = (name: 'account' | 'jwks' | 'redis'): void => {
+      if (name === 'account') {
+        checks.account = true;
+      } else if (name === 'jwks') {
+        checks.jwks = true;
+      } else {
+        checks.redis = true;
+      }
+    };
     const controller = new AbortController();
     let cancelled = false;
     let resolveDeadline: () => void = () => undefined;
@@ -97,7 +104,7 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
     const run = async (name: 'account' | 'jwks' | 'redis', action: () => Promise<boolean>): Promise<void> => {
       try {
         if (await action() && !controller.signal.aborted) {
-          checks[name] = true;
+          markHealthy(name);
         } else if (!controller.signal.aborted) {
           capture(name);
         }

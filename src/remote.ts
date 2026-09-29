@@ -429,4 +429,12 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
   };
 };
 
-export const createRemoteServer = (options: RemoteServerOptions): Server => createServer(createRemoteHandler(options));
+export const createRemoteServer = (options: RemoteServerOptions): Server => {
+  const handler = createRemoteHandler(options);
+  return createServer((request, response) => {
+    void handler(request, response).catch(() => {
+      logEvent({ event: 'remote_http_unhandled_error', fingerprint: 'remote.request' });
+      sendJson(response, 500, { error: 'Internal server error' });
+    });
+  });
+};
