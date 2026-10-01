@@ -140,7 +140,7 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
     try {
       result = await deps.client.autoPrompt(args);
     } catch (err) {
-      await recordFailure(deps, err);
+      recordFailure(deps, err);
       return formatError('Auto prompt', err, deps.mode);
     }
     if (deps.mode !== 'remote') {
@@ -163,7 +163,7 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
     try {
       const result = await deps.client.balance();
       if (deps.mode !== 'remote') {
-        await deps.session.updateBalance(result.balance);
+        deps.session.updateBalance(result.balance);
       }
       return { content: [{ type: 'text', text: `Account balance: $${formatNumber(result.balance)} USD` }], structuredContent: { ...result } };
     } catch (err) {
@@ -294,16 +294,16 @@ function registerQolTools(server: McpServer, deps: StdioToolDeps): void {
       outputSchema: usageOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async () => {
+    () => {
       let summary;
       try {
-        summary = await deps.session.summary();
+        summary = deps.session.summary();
       } catch (err) {
         return formatError('Usage summary', err, deps.mode);
       }
       const fingerprint = apiKeyFingerprint(deps.config.apiKey);
       const lines = [
-        ...(fingerprint === undefined ? [] : [`API key: ${fingerprint}`]),
+        `API key: ${fingerprint}`,
         `Generations this session: ${summary.totalGenerations}`,
         `Failed generations: ${summary.failedGenerations}`,
         `Total cost: ${formatNumber(summary.totalCost)} USD`,
@@ -321,7 +321,7 @@ function registerQolTools(server: McpServer, deps: StdioToolDeps): void {
           lastKnownBalance: summary.lastKnownBalance,
           byTool: summary.byTool,
           since: summary.since,
-          ...(fingerprint === undefined ? {} : { apiKeyFingerprint: fingerprint }),
+          apiKeyFingerprint: fingerprint,
         },
       };
     },
@@ -338,10 +338,10 @@ function registerQolTools(server: McpServer, deps: StdioToolDeps): void {
       outputSchema: listRecentOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ limit }) => {
+    ({ limit }) => {
       let generations;
       try {
-        generations = await deps.session.recent(limit ?? 10);
+        generations = deps.session.recent(limit ?? 10);
       } catch (err) {
         return formatError('Recent generations', err, deps.mode);
       }
@@ -370,7 +370,7 @@ async function generate(
   } catch (err) {
     // Count API/validation rejections (not transport errors), preserving any
     // balance the API reported without masking the original API error.
-    await recordFailure(deps, err);
+    recordFailure(deps, err);
     return formatError(label, err, deps.mode);
   }
   if (deps.mode !== 'remote') {
@@ -386,9 +386,9 @@ async function generate(
   return formatSuccess(label, result, toolName === 'animate' ? 'video' : 'image');
 }
 
-async function recordFailure(deps: ToolDeps, err: unknown): Promise<void> {
+function recordFailure(deps: ToolDeps, err: unknown): void {
   if (deps.mode !== 'remote' && err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
-    await deps.session.recordFailure(err.balance);
+    deps.session.recordFailure(err.balance);
   }
 }
 

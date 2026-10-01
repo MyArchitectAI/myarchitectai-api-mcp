@@ -89,7 +89,11 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
     const run = async (name: 'account' | 'jwks', action: () => Promise<boolean>): Promise<void> => {
       try {
         if (await action() && !controller.signal.aborted) {
-          checks[name] = true;
+          if (name === 'account') {
+            checks.account = true;
+          } else {
+            checks.jwks = true;
+          }
         } else if (!controller.signal.aborted) {
           capture(name);
         }
