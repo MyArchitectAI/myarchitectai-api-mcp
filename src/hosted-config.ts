@@ -4,8 +4,9 @@ import { ConfigError } from './errors.js';
 import { logEvent } from './logger.js';
 import { instrumentExternalFetch } from './remote-observability.js';
 import { createHostedHealthCheck } from './remote-health.js';
-import { createPortalAccountResolver, type PortalAccountDependencies,
+import { createPortalAccountResolver, createPortalHealthProbe, type PortalAccountDependencies,
   type PortalAccountOptions } from './portal-account.js';
+import { validatePortalOptions } from './portal-transport.js';
 import { UpstashRemoteSessionProvider, type UpstashRemoteHistoryOptions } from './remote-history.js';
 import { createRemoteHandler, type RemoteServerOptions } from './remote.js';
 import { validateRemoteHttpConfig, type RemoteHttpConfig } from './remote-config.js';
@@ -44,44 +45,6 @@ const jsonArray = (raw: string | undefined, name: string, optional = false): str
   return value as string[];
 };
 
-const isLowercaseUuid = (value: string): boolean => {
-  if (value.length !== 36) {
-    return false;
-  }
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (index === 8 || index === 13 || index === 18 || index === 23) {
-      if (code !== 45) {
-        return false;
-      }
-    } else if (!((code >= 48 && code <= 57) || (code >= 97 && code <= 102))) {
-      return false;
-    }
-  }
-  return true;
-};
-
-const keyBindings = (env: NodeJS.ProcessEnv): ReadonlyMap<string, number> => {
-  let value: unknown;
-  try {
-    value = JSON.parse(required(env.MCP_PORTAL_KEY_BINDINGS, 'MCP_PORTAL_KEY_BINDINGS')) as unknown;
-  } catch {
-    throw new ConfigError('MCP_PORTAL_KEY_BINDINGS must be a JSON object');
-  }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new ConfigError('MCP_PORTAL_KEY_BINDINGS must be a JSON object');
-  }
-  const bindings = new Map<string, number>();
-  for (const [subject, id] of Object.entries(value)) {
-    if (!isLowercaseUuid(subject) ||
-        typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) {
-      throw new ConfigError('MCP_PORTAL_KEY_BINDINGS must map exact lowercase user IDs to positive key IDs');
-    }
-    bindings.set(subject, id);
-  }
-  return bindings;
-};
-
 const portalOrigin = (raw: string): string => {
   let url: URL;
   try {
@@ -103,10 +66,6 @@ export const parseHostedConfig = (env: NodeJS.ProcessEnv): HostedConfig => {
   }
   const supabaseUrl = portalOrigin(required(env.PORTAL_SUPABASE_URL, 'PORTAL_SUPABASE_URL'));
   const issuer = `${supabaseUrl}/auth/v1`;
-  const awsRegion = required(env.AWS_REGION, 'AWS_REGION');
-  if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(awsRegion)) {
-    throw new ConfigError('AWS_REGION must be a valid API Gateway region');
-  }
   const revision = required(env.MCP_DEPLOYMENT_REVISION, 'MCP_DEPLOYMENT_REVISION');
   const auth: RemoteHttpConfig = {
     canonicalResource: env.MCP_CANONICAL_RESOURCE ?? DEFAULT_RESOURCE,
@@ -121,14 +80,11 @@ export const parseHostedConfig = (env: NodeJS.ProcessEnv): HostedConfig => {
   validateRemoteHttpConfig(auth);
   const portal: PortalAccountOptions = {
     issuer,
-    supabaseUrl,
-    serviceRoleKey: required(env.PORTAL_SUPABASE_SERVICE_ROLE_KEY, 'PORTAL_SUPABASE_SERVICE_ROLE_KEY'),
-    keyBindings: keyBindings(env),
-    awsRegion,
-    awsAccessKeyId: required(env.AWS_ACCESS_KEY_ID, 'AWS_ACCESS_KEY_ID'),
-    awsSecretAccessKey: required(env.AWS_SECRET_ACCESS_KEY, 'AWS_SECRET_ACCESS_KEY'),
-    ...(env.AWS_SESSION_TOKEN ? { awsSessionToken: required(env.AWS_SESSION_TOKEN, 'AWS_SESSION_TOKEN') } : {}),
+    baseUrl: required(env.PORTAL_BASE_URL, 'PORTAL_BASE_URL'),
+    canonicalResource: auth.canonicalResource,
+    signingSecret: required(env.MCP_PORTAL_SIGNING_SECRET, 'MCP_PORTAL_SIGNING_SECRET'),
   };
+  validatePortalOptions(portal);
   const history: UpstashRemoteHistoryOptions = {
     restUrl: required(env.UPSTASH_REDIS_REST_URL, 'UPSTASH_REDIS_REST_URL'),
     restToken: required(env.UPSTASH_REDIS_REST_TOKEN, 'UPSTASH_REDIS_REST_TOKEN'),
@@ -146,16 +102,13 @@ export type HostedServerDependencies = PortalAccountDependencies & Readonly<{
   jwks?: JWTVerifyGetKey;
   sessions?: RemoteSessionProvider;
   checkHealth?: RemoteServerOptions['checkHealth'];
-  createClient?: RemoteServerOptions['createClient'];
   createMedia?: RemoteServerOptions['createMedia'];
 }>;
 
 export const createHostedServer = (env: NodeJS.ProcessEnv, dependencies: HostedServerDependencies): Server => {
   const config = parseHostedConfig(env);
   const portalFetch = instrumentExternalFetch(dependencies.portalFetch ?? fetch,
-    { vendor: 'portal_supabase', operation: 'lookup_account', timeoutMs: 5_000, maxAttempts: 1 });
-  const awsFetch = instrumentExternalFetch(dependencies.awsFetch ?? fetch,
-    { vendor: 'aws_api_gateway', operation: 'get_api_key', timeoutMs: 5_000, maxAttempts: 1 });
+    { vendor: 'api_portal', operation: 'mcp_bridge', timeoutMs: 120_000, maxAttempts: 1 });
   const sessions = dependencies.sessions ?? new UpstashRemoteSessionProvider({
     ...config.history,
     fetch: instrumentExternalFetch(fetch,
@@ -164,9 +117,9 @@ export const createHostedServer = (env: NodeJS.ProcessEnv, dependencies: HostedS
       logEvent({ event: 'remote_history_error', outcome: 'error', fingerprint, operation });
     },
   });
-  const resolveAccount = createPortalAccountResolver(config.portal, { ...dependencies, portalFetch, awsFetch });
+  const resolveAccount = createPortalAccountResolver(config.portal, { ...dependencies, portalFetch });
   const checkHealth = dependencies.checkHealth ?? (sessions instanceof UpstashRemoteSessionProvider
-    ? createHostedHealthCheck({ portal: config.portal, resolveAccount,
+    ? createHostedHealthCheck({ checkAccount: createPortalHealthProbe(config.portal, { ...dependencies, portalFetch }),
       jwksUrl: config.auth.jwksUrl as string, history: sessions,
       fetch: instrumentExternalFetch(fetch,
         { vendor: 'supabase_jwks', operation: 'jwks_probe', timeoutMs: 5_000, maxAttempts: 1 }),
@@ -178,7 +131,6 @@ export const createHostedServer = (env: NodeJS.ProcessEnv, dependencies: HostedS
     resolveAccount,
     sessions,
     ...(checkHealth ? { checkHealth } : {}),
-    ...(dependencies.createClient ? { createClient: dependencies.createClient } : {}),
     ...(dependencies.createMedia ? { createMedia: dependencies.createMedia } : {}),
     onError: ({ fingerprint, requestId, route, status }) => {
       logEvent({ event: 'remote_request_error', outcome: 'error', fingerprint,

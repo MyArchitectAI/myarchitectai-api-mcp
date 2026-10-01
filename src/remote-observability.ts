@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { logEvent } from './logger.js';
 
 export type ExternalFetchOptions = Readonly<{
-  vendor: 'portal_supabase' | 'aws_api_gateway' | 'upstash_redis' | 'supabase_jwks';
+  vendor: 'api_portal' | 'upstash_redis' | 'supabase_jwks';
   operation: string;
   /** The caller enforces this deadline through response-body consumption. */
   timeoutMs: number;

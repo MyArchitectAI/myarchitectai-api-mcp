@@ -51,13 +51,11 @@
     "release:tag": "git tag \"v$npm_package_version\" && git push origin \"v$npm_package_version\"",
     "api:check": "node scripts/api-contract.mjs",
     "api:check:live": "node scripts/api-contract.mjs --live",
-    "api:update": "node scripts/api-contract.mjs --update"
+    "api:update": "node scripts/api-contract.mjs --update",
+    "smoke:portal": "node --import tsx scripts/smoke-portal.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@smithy/hash-node": "4.5.2",
-    "@smithy/protocol-http": "5.6.2",
-    "@smithy/signature-v4": "5.7.4",
     "@vercel/functions": "2.2.13",
     "jose": "5.10.0",
     "zod": "^4.4.3"

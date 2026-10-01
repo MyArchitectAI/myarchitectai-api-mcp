@@ -4,7 +4,6 @@ import { describe, it } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { MyArchitectAIClient, type FetchLike } from '../src/client.js';
 import { createHostedServer } from '../src/hosted-config.js';
 import { RemoteSessionRegistry } from '../src/remote-session.js';
 import { hostedEnv } from './fixtures/hosted-env.js';
@@ -14,39 +13,32 @@ const issuer = 'https://portal-project.supabase.co/auth/v1';
 const resource = 'https://mcp.myarchitectai.com/mcp';
 
 describe('hosted Node server assembly', () => {
-  it('registers the full MCP request lifetime and uses only the bound portal API key', async () => {
+  it('registers the full MCP request lifetime and keeps API keys inside Portal', async () => {
     const { privateKey, publicKey } = await generateKeyPair('ES256');
     const jwk = await exportJWK(publicKey);
     const jwks = createLocalJWKSet({ keys: [{ ...jwk, alg: 'ES256', use: 'sig' }] });
     const registrations: Promise<void>[] = [];
     let portalReads = 0;
-    let awsReads = 0;
+    let executions = 0;
     let upstreamStarted: (() => void) | undefined;
     let finishUpstream: (() => void) | undefined;
     const started = new Promise<void>((resolve) => { upstreamStarted = resolve; });
     const upstreamGate = new Promise<void>((resolve) => { finishUpstream = resolve; });
-    const portalFetch: typeof fetch = async (input) => {
+    const portalFetch: typeof fetch = async (input, init) => {
       portalReads++;
+      assert.ok(new Headers(init?.headers).get('authorization')?.startsWith('Bearer '));
+      assert.equal(new Headers(init?.headers).has('x-api-key'), false);
       const url = new URL(String(input));
-      return new Response(JSON.stringify(url.pathname.endsWith('/clients')
-        ? [{ id: 11, user_id: subject }]
-        : [{ id: 101, client_id: 11, aws_key_id: 'aws-101', deleted_at: null }]), { status: 200 });
-    };
-    const awsFetch: typeof fetch = async () => {
-      awsReads++;
-      return new Response(JSON.stringify({ id: 'aws-101', enabled: true, value: 'bound-portal-key' }), { status: 200 });
-    };
-    const upstreamFetch: FetchLike = async (_input, init) => {
-      assert.equal((init?.headers as Record<string, string>)['x-api-key'], 'bound-portal-key');
+      if (url.pathname.endsWith('/account')) { return Response.json({ authorized: true }); }
+      assert.equal(url.pathname, '/api/mcp/execute');
+      executions++;
       upstreamStarted?.();
       await upstreamGate;
-      return new Response(JSON.stringify({ balance: 17 }), { status: 200,
-        headers: { 'content-type': 'application/json' } });
+      return Response.json({ balance: 17 });
     };
     const server = createHostedServer({ ...hostedEnv(), MYARCHITECTAI_API_KEY: 'wrong-shared-guest-key' }, {
       registerWork: (work) => { registrations.push(work); }, jwks, sessions: new RemoteSessionRegistry(),
-      portalFetch, awsFetch,
-      createClient: (config) => new MyArchitectAIClient(config, upstreamFetch),
+      portalFetch,
     });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
@@ -81,8 +73,8 @@ describe('hosted Node server assembly', () => {
         assert.deepEqual(balance.structuredContent, { balance: 17 });
         await registeredBalance;
         assert.equal(settled, true);
-        assert.ok(awsReads >= 2);
-        assert.equal(portalReads, awsReads * 2);
+        assert.equal(executions, 1);
+        assert.ok(portalReads >= 3);
       } finally {
         finishUpstream?.();
         await client.close();

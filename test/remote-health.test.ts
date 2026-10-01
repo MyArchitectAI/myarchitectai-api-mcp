@@ -1,20 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { Config } from '../src/config.js';
-import type { PortalAccountOptions } from '../src/portal-account.js';
 import { createHostedHealthCheck } from '../src/remote-health.js';
 import { UpstashRemoteSessionProvider } from '../src/remote-history.js';
 
-const subject = '00000000-0000-0000-0000-000000000001';
-const portal = (bindings: ReadonlyMap<string, number> = new Map([[subject, 1]])): PortalAccountOptions => ({
-  issuer: 'https://portal.example/auth/v1', supabaseUrl: 'https://portal.example',
-  serviceRoleKey: 'synthetic-service-key', keyBindings: bindings,
-  awsRegion: 'eu-west-1', awsAccessKeyId: 'synthetic-id', awsSecretAccessKey: 'synthetic-secret',
-});
-const account: Config = {
-  apiKey: 'synthetic-api-key', baseUrl: 'https://api.example', timeoutMs: 1000,
-  maxRetries: 0, downloadDir: 'renders', maxPreviewBytes: 1000, stateFile: undefined,
-};
 const jwks = () => Response.json({ keys: [{ kty: 'RSA', kid: 'active-key', n: 'n', e: 'AQAB' }] });
 
 describe('hosted deep health', () => {
@@ -24,12 +12,11 @@ describe('hosted deep health', () => {
     let jwksCalls = 0;
     let redisCalls = 0;
     const check = createHostedHealthCheck({
-      portal: portal(), jwksUrl: 'https://portal.example/auth/v1/.well-known/jwks.json',
-      resolveAccount: async (identity, { signal }) => {
+      jwksUrl: 'https://portal.example/auth/v1/.well-known/jwks.json',
+      checkAccount: async (signal) => {
         accountCalls++;
-        assert.equal(identity.subject, subject);
         assert.equal(signal.aborted, false);
-        return account;
+        return true;
       },
       fetch: (async (_url, init) => {
         jwksCalls++;
@@ -56,8 +43,8 @@ describe('hosted deep health', () => {
     let accountCalls = 0;
     const events: unknown[] = [];
     const check = createHostedHealthCheck({
-      portal: portal(new Map()), jwksUrl: 'https://portal.example/jwks',
-      resolveAccount: async () => { accountCalls++; return account; },
+      jwksUrl: 'https://portal.example/jwks',
+      checkAccount: async () => { accountCalls++; return false; },
       fetch: (async () => jwks()) as typeof fetch,
       history: { ping: async () => {} }, now: () => now,
       onError: (event) => events.push(event),
@@ -69,21 +56,16 @@ describe('hosted deep health', () => {
     now = 5_000;
     await check();
     assert.equal(events.length, 2);
-    assert.equal(accountCalls, 0);
+    assert.equal(accountCalls, 2);
     assert.deepEqual(events[0], { fingerprint: 'remote.health.dependencies', check: 'account' });
   });
 
-  it('probes only the first selected binding and does not mask its failure with another account', async () => {
-    const checked: string[] = [];
+  it('does not report health when Portal rejects its representative account', async () => {
     const check = createHostedHealthCheck({
-      portal: portal(new Map([[subject, 1], ['00000000-0000-0000-0000-000000000002', 2]])),
-      jwksUrl: 'https://portal.example/jwks',
-      resolveAccount: async (identity) => { checked.push(identity.subject); return undefined; },
-      fetch: (async () => jwks()) as typeof fetch,
-      history: { ping: async () => {} },
+      jwksUrl: 'https://portal.example/jwks', checkAccount: async () => false,
+      fetch: (async () => jwks()) as typeof fetch, history: { ping: async () => {} },
     });
     assert.equal((await check()).checks.account, false);
-    assert.deepEqual(checked, [subject]);
   });
 
   it('rejects malformed JWKS without exposing its contents and retries after the failure TTL', async () => {
@@ -91,7 +73,7 @@ describe('hosted deep health', () => {
     let calls = 0;
     const events: unknown[] = [];
     const check = createHostedHealthCheck({
-      portal: portal(), jwksUrl: 'https://portal.example/jwks', resolveAccount: async () => account,
+      jwksUrl: 'https://portal.example/jwks', checkAccount: async () => true,
       fetch: (async () => { calls++; return Response.json({ keys: [] }); }) as typeof fetch,
       history: { ping: async () => {} }, now: () => now,
       onError: (event) => events.push(event),
@@ -110,10 +92,10 @@ describe('hosted deep health', () => {
     const events: unknown[] = [];
     let observedSignal: AbortSignal | undefined;
     const check = createHostedHealthCheck({
-      portal: portal(), jwksUrl: 'https://portal.example/jwks',
-      resolveAccount: async (_identity, { signal }) => {
+      jwksUrl: 'https://portal.example/jwks',
+      checkAccount: async (signal) => {
         observedSignal = signal;
-        return new Promise<Config>(() => {});
+        return new Promise<boolean>(() => {});
       },
       fetch: (async () => jwks()) as typeof fetch,
       history: { ping: async () => {} }, deadlineMs: 15,

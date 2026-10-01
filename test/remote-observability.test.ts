@@ -20,7 +20,7 @@ describe('external boundary observability', () => {
       return new Response('{}', { status: 200 });
     };
     const observed = instrumentExternalFetch(fetchImpl,
-      { vendor: 'portal_supabase', operation: 'lookup_account', timeoutMs: 5000, maxAttempts: 1 },
+      { vendor: 'api_portal', operation: 'account', timeoutMs: 5000, maxAttempts: 1 },
       (fields) => { events.push(fields); });
     await observed(`https://portal.example.test/path?token=${secret}`, {
       method: 'GET', headers: { authorization: `Bearer ${secret}` },
@@ -39,12 +39,12 @@ describe('external boundary observability', () => {
     const failure = new Error(secret);
     const fetchImpl: typeof fetch = async () => { calls++; throw failure; };
     const observed = instrumentExternalFetch(fetchImpl,
-      { vendor: 'aws_api_gateway', operation: 'get_api_key', timeoutMs: 5000, maxAttempts: 1 },
+      { vendor: 'api_portal', operation: 'execute', timeoutMs: 5000, maxAttempts: 1 },
       (fields) => { events.push(fields); });
     await assert.rejects(observed('https://apigateway.example.test/apikeys/secret'), (error) => error === failure);
     assert.equal(calls, 1);
     assert.equal(events[0]?.outcome, 'server_error');
-    assert.equal(events[0]?.fingerprint, 'remote.external.aws_api_gateway.get_api_key');
+    assert.equal(events[0]?.fingerprint, 'remote.external.api_portal.execute');
     assert.equal(events[0]?.['http.response.status_code'], undefined);
     assert.doesNotMatch(JSON.stringify(events), /synthetic-secret|apikeys/);
   });
@@ -104,7 +104,7 @@ describe('external boundary observability', () => {
     assert.equal(record.deployment.productionOrigin, 'https://mcp.myarchitectai.com');
     assert.deepEqual(record.health.deepChecks, ['account', 'jwks', 'redis']);
     assert.deepEqual(record.dependencies.map((dependency) => dependency.service),
-      ['portal_supabase', 'aws_api_gateway', 'supabase_jwks', 'upstash_redis']);
+      ['api_portal', 'supabase_jwks', 'upstash_redis']);
     assert.ok(record.dependencies.every((dependency) => dependency.maxAttempts === 1 && dependency.timeoutMs === 5000));
     assert.doesNotMatch(JSON.stringify(manifest), /laserfocused|systemd|localhost|127\.0\.0\.1/i);
   });

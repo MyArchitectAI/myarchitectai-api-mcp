@@ -1,6 +1,3 @@
-import type { PortalAccountOptions } from './portal-account.js';
-import type { ResolveAccount } from './remote.js';
-
 export type HostedHealthResult = Readonly<{
   status: 'ok' | 'unavailable';
   checks: Readonly<{ account: boolean; jwks: boolean; redis: boolean }>;
@@ -12,8 +9,7 @@ export type HostedHealthErrorEvent = Readonly<{
 }>;
 
 export type HostedHealthOptions = Readonly<{
-  portal: PortalAccountOptions;
-  resolveAccount: ResolveAccount;
+  checkAccount: (signal: AbortSignal) => Promise<boolean>;
   jwksUrl: string | URL;
   history: { ping(signal?: AbortSignal): Promise<void> };
   fetch?: typeof fetch;
@@ -64,7 +60,6 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
   if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > DEADLINE_MS) {
     throw new RangeError('Health deadline must be between 1 and 5000 milliseconds.');
   }
-  const selectedSubject = options.portal.keyBindings.keys().next().value;
   let cached: { result: HostedHealthResult; expiresAt: number } | undefined;
   let pending: Promise<HostedHealthResult> | undefined;
 
@@ -116,14 +111,7 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
     };
     try {
       const work = Promise.all([
-        run('account', async () => {
-          if (!selectedSubject || !options.portal.keyBindings.has(selectedSubject)) {
-            return false;
-          }
-          const account = await options.resolveAccount({ issuer: options.portal.issuer,
-            subject: selectedSubject, clientId: 'health-check' }, { signal: controller.signal });
-          return typeof account?.apiKey === 'string' && account.apiKey.length > 0;
-        }),
+        run('account', () => options.checkAccount(controller.signal)),
         run('jwks', async () => {
           const response = await fetcher(jwksUrl, { method: 'GET', redirect: 'error',
             headers: { accept: 'application/json' }, signal: controller.signal });

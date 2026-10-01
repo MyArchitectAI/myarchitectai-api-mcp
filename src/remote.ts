@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { JWTVerifyGetKey } from 'jose';
-import { MyArchitectAIClient } from './client.js';
+import { MyArchitectAIClient, type ApiClient } from './client.js';
 import { SERVER_NAME, SERVER_VERSION, type Config } from './config.js';
 import { ConfigError } from './errors.js';
 import { logEvent } from './logger.js';
@@ -14,12 +14,15 @@ import { createRemoteAuthenticator, RemoteAuthenticationUnavailableError,
 import { validateRemoteHttpConfig, type RemoteHttpConfig } from './remote-config.js';
 import { RemoteSessionCapacityError, RemoteSessionRegistry, RemoteSessionUnavailableError,
   type RemoteSessionLease, type RemoteSessionProvider } from './remote-session.js';
-import { registerTools } from './tools.js';
+import { registerTools, type RemoteToolConfig } from './tools.js';
+
+/** Hosted accounts use a Portal client without possessing database or API credentials. */
+export type RemoteAccount = Config | { client: ApiClient; config: RemoteToolConfig };
 
 export type ResolveAccount = (
   identity: VerifiedIdentity,
   context: { signal: AbortSignal },
-) => Config | undefined | Promise<Config | undefined>;
+) => RemoteAccount | undefined | Promise<RemoteAccount | undefined>;
 export type RemoteErrorEvent = {
   fingerprint: 'remote.auth' | 'remote.account_lookup' | 'remote.request' | 'remote.timeout' | 'remote.health';
   route: '/mcp' | '/health/deep';
@@ -32,7 +35,7 @@ export type RemoteServerOptions = {
   resolveAccount: ResolveAccount;
   sessions?: RemoteSessionProvider;
   createClient?: (config: Config) => MyArchitectAIClient;
-  createMedia?: (config: Config) => MediaService;
+  createMedia?: (config: Config | RemoteToolConfig) => MediaService;
   onError?: (event: RemoteErrorEvent) => void;
   checkHealth?: (signal?: AbortSignal) => Promise<{
     status: 'ok' | 'unavailable';
@@ -165,7 +168,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
   const authenticate = createRemoteAuthenticator(config, options.auth.jwks);
   const sessions = options.sessions ?? new RemoteSessionRegistry();
   const createClient = options.createClient ?? ((account: Config) => new MyArchitectAIClient(account));
-  const createMedia = options.createMedia ?? ((account: Config) => new RemoteMediaService({
+  const createMedia = options.createMedia ?? ((account: RemoteToolConfig) => new RemoteMediaService({
     timeoutMs: account.timeoutMs,
     maxBytes: account.maxPreviewBytes,
   }));
@@ -343,7 +346,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
         if (isAdmissionAborted()) {
           return;
         }
-        let account: Config | undefined;
+        let account: RemoteAccount | undefined;
         try {
           account = await awaitUntilAbort(Promise.resolve(options.resolveAccount(identity, {
             signal: abortController.signal,
@@ -359,7 +362,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
         if (isAdmissionAborted()) {
           return;
         }
-        if (!account || !account.apiKey.trim()) {
+        if (!account || (!('client' in account) && !account.apiKey.trim())) {
           sendJson(response, 403, { error: 'Account not linked' });
           return;
         }
@@ -390,7 +393,9 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           if (isAdmissionAborted()) {
             return;
           }
-          registerTools(server, { client: createClient(account), session: lease.session, media: createMedia(account), config: account, mode: 'remote' });
+          const toolConfig = 'client' in account ? account.config : account;
+          const client = 'client' in account ? account.client : createClient(account);
+          registerTools(server, { client, session: lease.session, media: createMedia(toolConfig), config: toolConfig, mode: 'remote' });
           if (isAdmissionAborted()) {
             return;
           }

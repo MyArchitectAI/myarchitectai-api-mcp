@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { apiKeyFingerprint, type Config } from './config.js';
-import type { GenerationResult, MyArchitectAIClient } from './client.js';
+import type { ApiClient, GenerationResult } from './client.js';
 import { classifyImageInput, describeSource, MediaService, openInBrowser, resolveLocalPath } from './media.js';
 import type { SessionHistory } from './session.js';
 import { MyArchitectAIError } from './errors.js';
@@ -41,11 +41,13 @@ import {
   validateUrlOutputShape,
 } from './schemas.js';
 
+export type RemoteToolConfig = Pick<Config, 'downloadDir' | 'maxPreviewBytes' | 'timeoutMs'>;
+
 export interface ToolDeps {
-  client: MyArchitectAIClient;
+  client: ApiClient;
   session: SessionHistory;
   media: MediaService;
-  config: Config;
+  config: Config | RemoteToolConfig;
   mode?: 'stdio' | 'remote';
 }
 
@@ -317,7 +319,8 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       } catch (err) {
         return formatError('Usage summary', err, deps.mode);
       }
-      const fingerprint = deps.mode === 'remote' ? undefined : apiKeyFingerprint(deps.config.apiKey);
+      const fingerprint = deps.mode === 'remote' || !('apiKey' in deps.config)
+        ? undefined : apiKeyFingerprint(deps.config.apiKey);
       const lines = [
         ...(fingerprint === undefined ? [] : [`API key: ${fingerprint}`]),
         `Generations this session: ${summary.totalGenerations}`,

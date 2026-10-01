@@ -13,12 +13,14 @@ describe('hosted runtime configuration', () => {
     assert.equal(config.history.namespace, 'myarchitectai:mcp:production');
     assert.equal(config.history.ttlSeconds, 1800);
     assert.equal(config.history.maxRecordsPerUser, 100);
-    assert.equal(config.portal.keyBindings.get('00000000-0000-0000-0000-000000000001'), 101);
+    assert.equal(config.portal.baseUrl, 'https://portal.example');
+    assert.equal('serviceRoleKey' in config.portal, false);
+    assert.equal('awsAccessKeyId' in config.portal, false);
   });
 
   it('fails closed on missing billing choice, deployment revision and credentials', () => {
     for (const name of ['MCP_BILLING_MODE', 'MCP_DEPLOYMENT_REVISION',
-      'PORTAL_SUPABASE_SERVICE_ROLE_KEY', 'AWS_SECRET_ACCESS_KEY', 'UPSTASH_REDIS_REST_TOKEN']) {
+      'PORTAL_BASE_URL', 'MCP_PORTAL_SIGNING_SECRET', 'UPSTASH_REDIS_REST_TOKEN']) {
       const env = hostedEnv();
       delete env[name];
       assert.throws(() => parseHostedConfig(env));
@@ -30,11 +32,10 @@ describe('hosted runtime configuration', () => {
     const invalid: NodeJS.ProcessEnv[] = [
       { ...hostedEnv(), PORTAL_SUPABASE_URL: 'https://other.example/rest/v1' },
       { ...hostedEnv(), PORTAL_SUPABASE_URL: 'http://portal-project.supabase.co' },
-      { ...hostedEnv(), MCP_PORTAL_KEY_BINDINGS: '{"not-a-user":101}' },
-      { ...hostedEnv(), MCP_PORTAL_KEY_BINDINGS: '{"00000000-0000-0000-0000-000000000001":0}' },
       { ...hostedEnv(), MCP_OAUTH_CLIENT_IDS: '["trusted-client","trusted-client"]' },
       { ...hostedEnv(), MCP_DEPLOYMENT_REVISION: 'short' },
-      { ...hostedEnv(), AWS_REGION: 'eu-central-1.evil.example' },
+      { ...hostedEnv(), PORTAL_BASE_URL: 'https://portal.example/forward' },
+      { ...hostedEnv(), MCP_PORTAL_SIGNING_SECRET: 'short' },
     ];
     for (const env of invalid) {
       assert.throws(() => parseHostedConfig(env), (error: unknown) => {
