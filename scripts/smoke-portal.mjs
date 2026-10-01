@@ -1,5 +1,5 @@
 // Cross-repository synthetic HTTP proof. No production services or paid API calls.
-// npm run smoke:portal -- /absolute/path/to/api-portal-checkout
+// Link the companion checkout at .portal-smoke, then run npm run smoke:portal.
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
