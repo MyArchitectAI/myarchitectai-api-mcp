@@ -30,7 +30,7 @@ describe('remote bearer authentication', () => {
       .setExpirationTime('5m')
       .sign(privateKey);
     server = createRemoteServer({
-      auth: { canonicalResource: resource, issuer, allowedOAuthClientIds: [clientId],
+      auth: { canonicalResource: resource, issuer,
         allowedHosts: ['127.0.0.1'], jwks },
       resolveAccount: () => undefined,
     });
@@ -83,7 +83,7 @@ describe('remote bearer authentication', () => {
     assert.equal(cookie?.status, 401);
   });
 
-  it('rejects wrong audience, issuer, client, expiry, signature, and multi-audience tokens', async () => {
+  it('rejects wrong audience, issuer, malformed client claims, expiry, signature, and multi-audience tokens', async () => {
     const { privateKey: alienKey } = await generateKeyPair('ES256');
     const valid = await sign();
     const badTokens = [
@@ -91,7 +91,7 @@ describe('remote bearer authentication', () => {
         .setAudience('authenticated').setSubject('user-1').setExpirationTime('5m').sign(signingKey),
       new SignJWT({ client_id: clientId }).setProtectedHeader({ alg: 'ES256' }).setIssuer('https://alien.example')
         .setAudience(resource).setSubject('user-1').setExpirationTime('5m').sign(signingKey),
-      sign({ client_id: 'other-client' }),
+      ...['', ' ', ' client', 'client ', 42, null, ['client'], { id: 'client' }].map((value) => sign({ client_id: value })),
       new SignJWT({ client_id: clientId }).setProtectedHeader({ alg: 'ES256' }).setIssuer(issuer)
         .setAudience(resource).setSubject('user-1').setExpirationTime(-1).sign(signingKey),
       new SignJWT({ client_id: clientId }).setProtectedHeader({ alg: 'ES256' }).setIssuer(issuer)
@@ -115,13 +115,20 @@ describe('remote bearer authentication', () => {
     assert.equal((await post(`Bearer ${valid}`)).status, 403);
   });
 
+  it('accepts another registered client token while still requiring an authorized Portal account', async () => {
+    const token = await sign({ client_id: 'second-native-client' });
+    const response = await post(`Bearer ${token}`);
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: 'Account not linked' });
+  });
+
   it('returns 503 before account or tool work when JWKS is unavailable, while an unknown key remains 401', async () => {
     let lookups = 0;
     let clients = 0;
     const capturedErrors: Array<{ fingerprint: string; status: number }> = [];
     let failAsUnknownKey = false;
     const unavailableServer = createRemoteServer({
-      auth: { canonicalResource: resource, issuer, allowedOAuthClientIds: [clientId],
+      auth: { canonicalResource: resource, issuer,
         allowedHosts: ['127.0.0.1'], jwks: async () => {
           if (failAsUnknownKey) {
             throw new errors.JWKSNoMatchingKey();

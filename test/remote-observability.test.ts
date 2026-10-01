@@ -63,9 +63,9 @@ describe('external boundary observability', () => {
       return new Response(stream, { status: 200 });
     };
     const observed = instrumentExternalFetch(fetchImpl,
-      { vendor: 'upstash_redis', operation: 'history_command', timeoutMs: 5000, maxAttempts: 1 },
+      { vendor: 'api_portal', operation: 'execute', timeoutMs: 120000, maxAttempts: 1 },
       () => undefined);
-    const response = await observed('https://redis.example.test', init);
+    const response = await observed('https://portal.example.test/api/mcp/execute', init);
     const body = response.text();
     abort.abort();
     await assert.rejects(body, /body aborted/);
@@ -78,8 +78,7 @@ describe('external boundary observability', () => {
     const issuer = 'https://auth.example.test';
     const token = await new SignJWT({ client_id: 'trusted-client' }).setProtectedHeader({ alg: 'ES256' })
       .setIssuer(issuer).setAudience(resource).setSubject('synthetic-user').setExpirationTime('5m').sign(privateKey);
-    const config = validateRemoteHttpConfig({ canonicalResource: resource, issuer,
-      allowedOAuthClientIds: ['trusted-client'] });
+    const config = validateRemoteHttpConfig({ canonicalResource: resource, issuer });
     const request = { rawHeaders: ['Authorization', `Bearer ${token}`],
       headers: { authorization: `Bearer ${token}` } } as IncomingMessage;
     const resolveKey = async (): Promise<typeof publicKey> => publicKey;
@@ -95,16 +94,16 @@ describe('external boundary observability', () => {
     assert.doesNotMatch(JSON.stringify(events), /synthetic-secret|synthetic-user|eyJ/);
   });
 
-  it('keeps the Vercel manifest scoped to the account, JWKS and Redis deep checks', async () => {
+  it('keeps the Vercel manifest scoped to account and JWKS dependencies', async () => {
     const manifest: unknown = JSON.parse(await readFile(new URL('../deploy/manifest.json', import.meta.url), 'utf8'));
     assert.ok(manifest && typeof manifest === 'object' && 'deployment' in manifest && 'health' in manifest && 'dependencies' in manifest);
     const record = manifest as { deployment: { provider: string; productionOrigin: string }; health: { deepChecks: string[] };
       dependencies: Array<{ service: string; maxAttempts: number; timeoutMs: number }> };
     assert.equal(record.deployment.provider, 'vercel');
     assert.equal(record.deployment.productionOrigin, 'https://mcp.myarchitectai.com');
-    assert.deepEqual(record.health.deepChecks, ['account', 'jwks', 'redis']);
+    assert.deepEqual(record.health.deepChecks, ['account', 'jwks']);
     assert.deepEqual(record.dependencies.map((dependency) => dependency.service),
-      ['api_portal', 'supabase_jwks', 'upstash_redis']);
+      ['api_portal', 'supabase_jwks']);
     assert.ok(record.dependencies.every((dependency) => dependency.maxAttempts === 1 && dependency.timeoutMs === 5000));
     assert.doesNotMatch(JSON.stringify(manifest), /laserfocused|systemd|localhost|127\.0\.0\.1/i);
   });

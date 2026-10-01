@@ -70,7 +70,8 @@ export const createRemoteAuthenticator = (
       });
       if (payload.aud !== config.canonicalResource || typeof payload.sub !== 'string' ||
           !payload.sub.trim() || payload.sub !== payload.sub.trim() ||
-          typeof payload.client_id !== 'string' || !config.allowedOAuthClientIds.has(payload.client_id)) {
+          typeof payload.client_id !== 'string' || !payload.client_id.trim() ||
+          payload.client_id !== payload.client_id.trim()) {
         throw new RemoteAuthenticationError();
       }
       return { issuer: config.issuer, subject: payload.sub, clientId: payload.client_id };

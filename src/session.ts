@@ -30,33 +30,15 @@ export interface UsageSummary {
   since: string | null;
 }
 
-/** The same tool contract supports a local store and an asynchronous shared store. */
-export type SessionHistory = {
-  record(entry: Omit<GenerationRecord, 'id' | 'createdAt'>): GenerationRecord | Promise<GenerationRecord>;
-  recordFailure(balance?: number): void | Promise<void>;
-  updateBalance(balance: number): void | Promise<void>;
-  recent(limit?: number): GenerationRecord[] | Promise<GenerationRecord[]>;
-  summary(): UsageSummary | Promise<UsageSummary>;
-};
-
 export class SessionStore {
   #records: GenerationRecord[] = [];
   #seq = 0;
   #failedGenerations = 0;
   #lastKnownBalance: number | null = null;
-  #totalGenerations = 0;
-  #totalCost = 0;
-  #byTool: Record<string, { count: number; cost: number }> = {};
-  #since: string | null = null;
   readonly #stateFile: string | undefined;
-  readonly #maxRecords: number | undefined;
 
-  constructor(stateFile?: string, opts: { maxRecords?: number } = {}) {
-    if (opts.maxRecords !== undefined && (!Number.isSafeInteger(opts.maxRecords) || opts.maxRecords < 1)) {
-      throw new RangeError('maxRecords must be a positive integer.');
-    }
+  constructor(stateFile?: string) {
     this.#stateFile = stateFile;
-    this.#maxRecords = opts.maxRecords;
   }
 
   /** Load persisted history if a state file is configured and present. */
@@ -65,13 +47,9 @@ export class SessionStore {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.#stateFile, 'utf8'));
       if (Array.isArray(parsed)) {
-        const records = parsed.filter(isRecord);
-        this.#seq = records.reduce((max, record) => Math.max(max, record.id), 0);
-        this.#records = this.#maxRecords === undefined ? records : records.slice(-this.#maxRecords);
+        this.#records = parsed.filter(isRecord);
+        this.#seq = this.#records.reduce((max, record) => Math.max(max, record.id), 0);
         this.#lastKnownBalance = this.#records.at(-1)?.balance ?? null;
-        for (const record of records) {
-          this.#accumulate(record);
-        }
       }
     } catch {
       // No (or unreadable) prior state — start fresh.
@@ -90,10 +68,6 @@ export class SessionStore {
       ...(entry.outputType !== undefined ? { outputType: entry.outputType } : {}),
     };
     this.#records.push(record);
-    this.#accumulate(record);
-    if (this.#maxRecords !== undefined && this.#records.length > this.#maxRecords) {
-      this.#records.splice(0, this.#records.length - this.#maxRecords);
-    }
     this.#lastKnownBalance = record.balance;
     await this.#persist();
     return record;
@@ -122,23 +96,22 @@ export class SessionStore {
   }
 
   summary(): UsageSummary {
+    const byTool: Record<string, { count: number; cost: number }> = {};
+    let totalCost = 0;
+    for (const record of this.#records) {
+      totalCost += record.cost;
+      const bucket = (byTool[record.tool] ??= { count: 0, cost: 0 });
+      bucket.count += 1;
+      bucket.cost += record.cost;
+    }
     return {
-      totalGenerations: this.#totalGenerations,
+      totalGenerations: this.#records.length,
       failedGenerations: this.#failedGenerations,
-      totalCost: this.#totalCost,
+      totalCost,
       lastKnownBalance: this.#lastKnownBalance,
-      byTool: structuredClone(this.#byTool),
-      since: this.#since,
+      byTool,
+      since: this.#records[0]?.createdAt ?? null,
     };
-  }
-
-  #accumulate(record: GenerationRecord): void {
-    this.#totalGenerations += 1;
-    this.#totalCost += record.cost;
-    this.#since ??= record.createdAt;
-    const bucket = (this.#byTool[record.tool] ??= { count: 0, cost: 0 });
-    bucket.count += 1;
-    bucket.cost += record.cost;
   }
 
   async #persist(): Promise<void> {

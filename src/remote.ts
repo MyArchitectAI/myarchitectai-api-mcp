@@ -7,17 +7,13 @@ import { MyArchitectAIClient, type ApiClient } from './client.js';
 import { SERVER_NAME, SERVER_VERSION, type Config } from './config.js';
 import { ConfigError } from './errors.js';
 import { logEvent } from './logger.js';
-import { MediaService } from './media.js';
-import { RemoteMediaService } from './remote-media.js';
 import { createRemoteAuthenticator, RemoteAuthenticationUnavailableError,
   type VerifiedIdentity } from './remote-auth.js';
 import { validateRemoteHttpConfig, type RemoteHttpConfig } from './remote-config.js';
-import { RemoteSessionCapacityError, RemoteSessionRegistry, RemoteSessionUnavailableError,
-  type RemoteSessionLease, type RemoteSessionProvider } from './remote-session.js';
-import { registerTools, type RemoteToolConfig } from './tools.js';
+import { registerTools } from './tools.js';
 
 /** Hosted accounts use a Portal client without possessing database or API credentials. */
-export type RemoteAccount = Config | { client: ApiClient; config: RemoteToolConfig };
+export type RemoteAccount = Config | { client: ApiClient };
 
 export type ResolveAccount = (
   identity: VerifiedIdentity,
@@ -33,13 +29,11 @@ export type RemoteErrorEvent = {
 export type RemoteServerOptions = {
   auth: RemoteHttpConfig & { jwks?: JWTVerifyGetKey };
   resolveAccount: ResolveAccount;
-  sessions?: RemoteSessionProvider;
   createClient?: (config: Config) => MyArchitectAIClient;
-  createMedia?: (config: Config | RemoteToolConfig) => MediaService;
   onError?: (event: RemoteErrorEvent) => void;
   checkHealth?: (signal?: AbortSignal) => Promise<{
     status: 'ok' | 'unavailable';
-    checks: { account: boolean; jwks: boolean; redis: boolean };
+    checks: { account: boolean; jwks: boolean };
   }>;
 };
 
@@ -166,12 +160,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
   }
   const config = validateRemoteHttpConfig(options.auth);
   const authenticate = createRemoteAuthenticator(config, options.auth.jwks);
-  const sessions = options.sessions ?? new RemoteSessionRegistry();
   const createClient = options.createClient ?? ((account: Config) => new MyArchitectAIClient(account));
-  const createMedia = options.createMedia ?? ((account: RemoteToolConfig) => new RemoteMediaService({
-    timeoutMs: account.timeoutMs,
-    maxBytes: account.maxPreviewBytes,
-  }));
   let activeRequests = 0;
   const capture = (event: RemoteErrorEvent): void => {
     try {
@@ -251,7 +240,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           } catch {
             capture({ fingerprint: 'remote.health', route: '/health/deep', status: 503, requestId });
             sendJson(response, 503, { status: 'unavailable', scope: 'dependencies',
-              checks: { account: false, jwks: false, redis: false } });
+              checks: { account: false, jwks: false } });
           }
           return;
         }
@@ -295,8 +284,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           capture({ fingerprint: 'remote.timeout', route: '/mcp', status: 504, requestId });
           if (dispatchStarted) {
             // Once the SDK owns the response, a 504 body races its final JSON
-            // write. End the socket while the paid tool finishes and records
-            // the result under the still-held per-user lease.
+            // write. End the socket while the admitted paid tool settles.
             response.statusCode = 504;
             response.destroy();
           } else {
@@ -366,25 +354,6 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           sendJson(response, 403, { error: 'Account not linked' });
           return;
         }
-        const acquire = Promise.resolve(sessions.acquire({ issuer: identity.issuer, subject: identity.subject }));
-        let leaseOwnedByRequest = false;
-        void acquire.then((lateLease) => {
-          if (isAdmissionAborted() && !leaseOwnedByRequest) {
-            void Promise.resolve(lateLease.release()).catch(() => {
-              capture({ fingerprint: 'remote.request', route: '/mcp', status: 503, requestId });
-            });
-          }
-        }, () => undefined);
-        let lease: RemoteSessionLease;
-        try {
-          lease = await awaitUntilAbort(acquire, abortController.signal);
-          leaseOwnedByRequest = true;
-        } catch (error) {
-          if (isAdmissionAborted()) {
-            return;
-          }
-          throw error;
-        }
         const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
         // The 1.29 SDK types conflict with exactOptionalPropertyTypes; omitting
         // sessionIdGenerator is its documented stateless runtime mode.
@@ -393,9 +362,8 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           if (isAdmissionAborted()) {
             return;
           }
-          const toolConfig = 'client' in account ? account.config : account;
           const client = 'client' in account ? account.client : createClient(account);
-          registerTools(server, { client, session: lease.session, media: createMedia(toolConfig), config: toolConfig, mode: 'remote' });
+          registerTools(server, { client, mode: 'remote' });
           if (isAdmissionAborted()) {
             return;
           }
@@ -406,18 +374,9 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           dispatchStarted = true;
           await transport.handleRequest(request, response, body);
         } finally {
-          try {
-            await server.close();
-          } finally {
-            await lease.release();
-          }
+          await server.close();
         }
-      } catch (error) {
-        if (error instanceof RemoteSessionCapacityError || error instanceof RemoteSessionUnavailableError) {
-          capture({ fingerprint: 'remote.request', route: '/mcp', status: 503, requestId });
-          sendJson(response, 503, { error: 'Server busy' });
-          return;
-        }
+      } catch {
         capture({ fingerprint: 'remote.request', route: '/mcp', status: 500, requestId });
         sendJson(response, 500, { error: 'Internal server error' });
       } finally {

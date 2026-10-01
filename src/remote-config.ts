@@ -4,7 +4,6 @@ export type RemoteHttpConfig = {
   canonicalResource: string;
   issuer: string;
   jwksUrl?: string | URL;
-  allowedOAuthClientIds: readonly string[];
   allowedHosts?: readonly string[];
   allowedOrigins?: readonly string[];
   maxBodyBytes?: number;
@@ -18,7 +17,6 @@ export type ValidatedRemoteHttpConfig = {
   canonicalResource: string;
   issuer: string;
   jwksUrl?: URL;
-  allowedOAuthClientIds: ReadonlySet<string>;
   allowedHosts: ReadonlySet<string>;
   allowedOrigins: ReadonlySet<string>;
   mcpPath: string;
@@ -61,10 +59,6 @@ export const validateRemoteHttpConfig = (input: RemoteHttpConfig): ValidatedRemo
   if (issuer.href.replace(/\/$/, '') !== input.issuer) {
     throw new ConfigError('issuer must not end with a trailing slash');
   }
-  const allowedOAuthClientIds = new Set(input.allowedOAuthClientIds);
-  if (allowedOAuthClientIds.size === 0 || [...allowedOAuthClientIds].some((id) => !id || id.trim() !== id)) {
-    throw new ConfigError('allowedOAuthClientIds must contain nonempty exact OAuth client IDs');
-  }
   const allowedHosts = new Set([resource.hostname.toLowerCase()]);
   for (const host of input.allowedHosts ?? []) {
     if (!/^[a-z0-9.-]+$/i.test(host) || host.includes('..')) {
@@ -97,7 +91,6 @@ export const validateRemoteHttpConfig = (input: RemoteHttpConfig): ValidatedRemo
     canonicalResource: resource.href,
     issuer: input.issuer,
     ...(jwksUrl ? { jwksUrl } : {}),
-    allowedOAuthClientIds,
     allowedHosts,
     allowedOrigins,
     mcpPath: resource.pathname,

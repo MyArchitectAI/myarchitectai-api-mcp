@@ -37,7 +37,8 @@ export const createPortalRequest = (options: PortalOptions, dependencies: Portal
   const signingKey = new TextEncoder().encode(options.signingSecret);
   return async (operation, body, identity, callerSignal) => {
     if (operation !== 'health' && (!identity || identity.issuer !== options.issuer ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(identity.subject) || !identity.clientId.trim())) {
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(identity.subject) ||
+        !identity.clientId.trim() || identity.clientId !== identity.clientId.trim())) {
       throw new Error('Invalid Portal delegation identity');
     }
     if (operation === 'health' && identity) {

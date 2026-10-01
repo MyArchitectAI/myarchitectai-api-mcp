@@ -7,18 +7,14 @@ import { createHostedHealthCheck } from './remote-health.js';
 import { createPortalAccountResolver, createPortalHealthProbe, type PortalAccountDependencies,
   type PortalAccountOptions } from './portal-account.js';
 import { validatePortalOptions } from './portal-transport.js';
-import { UpstashRemoteSessionProvider, type UpstashRemoteHistoryOptions } from './remote-history.js';
 import { createRemoteHandler, type RemoteServerOptions } from './remote.js';
 import { validateRemoteHttpConfig, type RemoteHttpConfig } from './remote-config.js';
-import type { RemoteSessionProvider } from './remote-session.js';
 
 const DEFAULT_RESOURCE = 'https://mcp.myarchitectai.com/mcp';
-const HISTORY_NAMESPACE = 'myarchitectai:mcp:production';
 
 export type HostedConfig = Readonly<{
   auth: RemoteHttpConfig;
   portal: PortalAccountOptions;
-  history: UpstashRemoteHistoryOptions;
 }>;
 
 const required = (value: string | undefined, name: string): string => {
@@ -28,8 +24,8 @@ const required = (value: string | undefined, name: string): string => {
   return value;
 };
 
-const jsonArray = (raw: string | undefined, name: string, optional = false): string[] => {
-  if (raw === undefined && optional) {
+const jsonArray = (raw: string | undefined, name: string): string[] => {
+  if (raw === undefined) {
     return [];
   }
   let value: unknown;
@@ -71,9 +67,8 @@ export const parseHostedConfig = (env: NodeJS.ProcessEnv): HostedConfig => {
     canonicalResource: env.MCP_CANONICAL_RESOURCE ?? DEFAULT_RESOURCE,
     issuer,
     jwksUrl: `${issuer}/.well-known/jwks.json`,
-    allowedOAuthClientIds: jsonArray(env.MCP_OAUTH_CLIENT_IDS, 'MCP_OAUTH_CLIENT_IDS'),
-    allowedHosts: jsonArray(env.MCP_ALLOWED_HOSTS, 'MCP_ALLOWED_HOSTS', true),
-    allowedOrigins: jsonArray(env.MCP_ALLOWED_ORIGINS, 'MCP_ALLOWED_ORIGINS', true),
+    allowedHosts: jsonArray(env.MCP_ALLOWED_HOSTS, 'MCP_ALLOWED_HOSTS'),
+    allowedOrigins: jsonArray(env.MCP_ALLOWED_ORIGINS, 'MCP_ALLOWED_ORIGINS'),
     ...(env.OBS_HEALTH_TOKEN === undefined ? {} : { healthToken: env.OBS_HEALTH_TOKEN }),
     deploymentRevision: revision,
   };
@@ -85,53 +80,34 @@ export const parseHostedConfig = (env: NodeJS.ProcessEnv): HostedConfig => {
     signingSecret: required(env.MCP_PORTAL_SIGNING_SECRET, 'MCP_PORTAL_SIGNING_SECRET'),
   };
   validatePortalOptions(portal);
-  const history: UpstashRemoteHistoryOptions = {
-    restUrl: required(env.UPSTASH_REDIS_REST_URL, 'UPSTASH_REDIS_REST_URL'),
-    restToken: required(env.UPSTASH_REDIS_REST_TOKEN, 'UPSTASH_REDIS_REST_TOKEN'),
-    keySecret: required(env.MCP_HISTORY_KEY_SECRET, 'MCP_HISTORY_KEY_SECRET'),
-    namespace: HISTORY_NAMESPACE,
-    ttlSeconds: 1_800,
-    maxRecordsPerUser: 100,
-  };
-  return { auth, portal, history };
+  return { auth, portal };
 };
 
 /** Dependency overrides are for synthetic local verification; production uses the defaults. */
 export type HostedServerDependencies = PortalAccountDependencies & Readonly<{
   registerWork: (work: Promise<void>) => void;
   jwks?: JWTVerifyGetKey;
-  sessions?: RemoteSessionProvider;
   checkHealth?: RemoteServerOptions['checkHealth'];
-  createMedia?: RemoteServerOptions['createMedia'];
 }>;
 
 export const createHostedServer = (env: NodeJS.ProcessEnv, dependencies: HostedServerDependencies): Server => {
   const config = parseHostedConfig(env);
   const portalFetch = instrumentExternalFetch(dependencies.portalFetch ?? fetch,
     { vendor: 'api_portal', operation: 'mcp_bridge', timeoutMs: 120_000, maxAttempts: 1 });
-  const sessions = dependencies.sessions ?? new UpstashRemoteSessionProvider({
-    ...config.history,
+  const resolveAccount = createPortalAccountResolver(config.portal, { ...dependencies, portalFetch });
+  const checkHealth = dependencies.checkHealth ?? createHostedHealthCheck({
+    checkAccount: createPortalHealthProbe(config.portal, { ...dependencies, portalFetch }),
+    jwksUrl: config.auth.jwksUrl as string,
     fetch: instrumentExternalFetch(fetch,
-      { vendor: 'upstash_redis', operation: 'history_command', timeoutMs: 5_000, maxAttempts: 1 }),
-    onError: ({ fingerprint, operation }) => {
-      logEvent({ event: 'remote_history_error', outcome: 'error', fingerprint, operation });
+      { vendor: 'supabase_jwks', operation: 'jwks_probe', timeoutMs: 5_000, maxAttempts: 1 }),
+    onError: ({ fingerprint, check }) => {
+      logEvent({ event: 'remote_health_error', outcome: 'error', fingerprint, check });
     },
   });
-  const resolveAccount = createPortalAccountResolver(config.portal, { ...dependencies, portalFetch });
-  const checkHealth = dependencies.checkHealth ?? (sessions instanceof UpstashRemoteSessionProvider
-    ? createHostedHealthCheck({ checkAccount: createPortalHealthProbe(config.portal, { ...dependencies, portalFetch }),
-      jwksUrl: config.auth.jwksUrl as string, history: sessions,
-      fetch: instrumentExternalFetch(fetch,
-        { vendor: 'supabase_jwks', operation: 'jwks_probe', timeoutMs: 5_000, maxAttempts: 1 }),
-      onError: ({ fingerprint, check }) => {
-        logEvent({ event: 'remote_health_error', outcome: 'error', fingerprint, check });
-      } }) : undefined);
   const handler = createRemoteHandler({
     auth: { ...config.auth, ...(dependencies.jwks ? { jwks: dependencies.jwks } : {}) },
     resolveAccount,
-    sessions,
-    ...(checkHealth ? { checkHealth } : {}),
-    ...(dependencies.createMedia ? { createMedia: dependencies.createMedia } : {}),
+    checkHealth,
     onError: ({ fingerprint, requestId, route, status }) => {
       logEvent({ event: 'remote_request_error', outcome: 'error', fingerprint,
         request_id: requestId, 'http.route': route, 'http.response.status_code': status });

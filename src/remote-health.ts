@@ -1,17 +1,16 @@
 export type HostedHealthResult = Readonly<{
   status: 'ok' | 'unavailable';
-  checks: Readonly<{ account: boolean; jwks: boolean; redis: boolean }>;
+  checks: Readonly<{ account: boolean; jwks: boolean }>;
 }>;
 
 export type HostedHealthErrorEvent = Readonly<{
   fingerprint: 'remote.health.dependencies';
-  check: 'account' | 'jwks' | 'redis' | 'deadline';
+  check: 'account' | 'jwks' | 'deadline';
 }>;
 
 export type HostedHealthOptions = Readonly<{
   checkAccount: (signal: AbortSignal) => Promise<boolean>;
   jwksUrl: string | URL;
-  history: { ping(signal?: AbortSignal): Promise<void> };
   fetch?: typeof fetch;
   now?: () => number;
   /** A shorter synthetic-test deadline; production defaults to five seconds. */
@@ -46,7 +45,7 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 };
 
-/** A representative, explicitly bound account plus JWKS and Redis dependency probe. */
+/** Portal dependency health plus a bounded JWKS probe; no user account admission claim. */
 export const createHostedHealthCheck = (options: HostedHealthOptions):
   (signal?: AbortSignal) => Promise<HostedHealthResult> => {
   let jwksUrl: URL;
@@ -68,16 +67,7 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
   };
 
   const probe = async (callerSignal?: AbortSignal): Promise<{ result: HostedHealthResult; cancelled: boolean }> => {
-    const checks = { account: false, jwks: false, redis: false };
-    const markHealthy = (name: 'account' | 'jwks' | 'redis'): void => {
-      if (name === 'account') {
-        checks.account = true;
-      } else if (name === 'jwks') {
-        checks.jwks = true;
-      } else {
-        checks.redis = true;
-      }
-    };
+    const checks = { account: false, jwks: false };
     const controller = new AbortController();
     let cancelled = false;
     let resolveDeadline: () => void = () => undefined;
@@ -96,10 +86,10 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
       capture('deadline');
       resolveDeadline();
     }, deadlineMs);
-    const run = async (name: 'account' | 'jwks' | 'redis', action: () => Promise<boolean>): Promise<void> => {
+    const run = async (name: 'account' | 'jwks', action: () => Promise<boolean>): Promise<void> => {
       try {
         if (await action() && !controller.signal.aborted) {
-          markHealthy(name);
+          checks[name] = true;
         } else if (!controller.signal.aborted) {
           capture(name);
         }
@@ -123,14 +113,10 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
             isRecord(key) && typeof key.kty === 'string' && key.kty.length > 0 &&
             typeof key.kid === 'string' && key.kid.length > 0);
         }),
-        run('redis', async () => {
-          await options.history.ping(controller.signal);
-          return true;
-        }),
       ]);
       await Promise.race([work, deadline]);
       const snapshot = Object.freeze({ ...checks });
-      return { result: Object.freeze({ status: checks.account && checks.jwks && checks.redis ? 'ok' : 'unavailable',
+      return { result: Object.freeze({ status: checks.account && checks.jwks ? 'ok' : 'unavailable',
         checks: snapshot }), cancelled };
     } finally {
       clearTimeout(timer);
@@ -140,7 +126,7 @@ export const createHostedHealthCheck = (options: HostedHealthOptions):
 
   return (signal?: AbortSignal): Promise<HostedHealthResult> => {
     if (signal?.aborted) {
-      return Promise.resolve({ status: 'unavailable', checks: { account: false, jwks: false, redis: false } });
+      return Promise.resolve({ status: 'unavailable', checks: { account: false, jwks: false } });
     }
     if (cached && now() < cached.expiresAt) {
       return Promise.resolve(cached.result);

@@ -12,8 +12,7 @@
     "deepAuthHeader": "X-Obs-Token",
     "deepChecks": [
       "account",
-      "jwks",
-      "redis"
+      "jwks"
     ]
   },
   "dependencies": [
@@ -25,7 +24,7 @@
       ],
       "timeoutMs": 5000,
       "maxAttempts": 1,
-      "note": "Portal owns its existing database/AWS access and representative account check. Generation uses POST /api/mcp/execute with a 120000ms deadline and no paid retries."
+      "note": "Portal reports independent database/AWS dependency health using its existing access; this does not verify user account admission. Generation uses POST /api/mcp/execute with a 120000ms deadline and no paid retries."
     },
     {
       "service": "supabase_jwks",
@@ -36,16 +35,6 @@
       "timeoutMs": 5000,
       "maxAttempts": 1,
       "note": "Authentication key resolution may use jose's cache; its resolution event is not an HTTP-egress claim."
-    },
-    {
-      "service": "upstash_redis",
-      "deepCheck": "redis",
-      "readOperations": [
-        "POST / with Redis PING command"
-      ],
-      "timeoutMs": 5000,
-      "maxAttempts": 1,
-      "note": "Operational history EVAL commands may change data or TTL and are outside this read-only health probe."
     }
   ]
 }

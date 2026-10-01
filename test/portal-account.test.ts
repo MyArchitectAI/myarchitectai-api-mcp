@@ -46,7 +46,8 @@ describe('Portal-owned MCP accounts', () => {
     } });
     const account = await resolve(identity, context());
     assert.ok(account && 'client' in account);
-    assert.equal('apiKey' in account.config, false);
+    assert.equal('apiKey' in account, false);
+    assert.equal('config' in account, false);
     assert.deepEqual(await account.client.balance(), { balance: 23 });
     assert.equal(new Set(assertions).size, 2);
   });

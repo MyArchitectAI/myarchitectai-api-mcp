@@ -5,7 +5,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { createHostedServer } from '../src/hosted-config.js';
-import { RemoteSessionRegistry } from '../src/remote-session.js';
 import { hostedEnv } from './fixtures/hosted-env.js';
 
 const subject = '00000000-0000-0000-0000-000000000001';
@@ -37,7 +36,7 @@ describe('hosted Node server assembly', () => {
       return Response.json({ balance: 17 });
     };
     const server = createHostedServer({ ...hostedEnv(), MYARCHITECTAI_API_KEY: 'wrong-shared-guest-key' }, {
-      registerWork: (work) => { registrations.push(work); }, jwks, sessions: new RemoteSessionRegistry(),
+      registerWork: (work) => { registrations.push(work); }, jwks,
       portalFetch,
     });
     server.listen(0, '127.0.0.1');
@@ -90,7 +89,6 @@ describe('hosted Node server assembly', () => {
     let portalReads = 0;
     const server = createHostedServer(hostedEnv(), {
       registerWork: () => { throw new Error('synthetic lifecycle failure'); },
-      sessions: new RemoteSessionRegistry(),
       portalFetch: async () => { portalReads++; return new Response('[]'); },
     });
     server.listen(0, '127.0.0.1');

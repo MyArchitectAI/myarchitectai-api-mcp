@@ -6,7 +6,6 @@ const base: RemoteHttpConfig = {
   canonicalResource: 'https://mcp.example.com/mcp',
   issuer: 'https://auth.example.com/auth/v1',
   jwksUrl: 'https://auth.example.com/auth/v1/.well-known/jwks.json',
-  allowedOAuthClientIds: ['trusted-client'],
 };
 
 describe('remote configuration', () => {
@@ -21,13 +20,11 @@ describe('remote configuration', () => {
     assert.equal(validateRemoteHttpConfig({ ...base, deploymentRevision: revision }).deploymentRevision, revision);
   });
 
-  it('rejects unsafe resource, origin, client and capacity configurations', () => {
+  it('rejects unsafe resource, origin and capacity configurations', () => {
     const invalid: RemoteHttpConfig[] = [
       { ...base, canonicalResource: 'http://mcp.example.com/mcp' },
       { ...base, canonicalResource: 'https://mcp.example.com/mcp?token=secret' },
       { ...base, issuer: 'http://auth.example.com' },
-      { ...base, allowedOAuthClientIds: [] },
-      { ...base, allowedOAuthClientIds: [''] },
       { ...base, allowedOrigins: ['*'] },
       { ...base, allowedOrigins: ['https://trusted.example/path'] },
       { ...base, allowedHosts: ['host.example:443'] },

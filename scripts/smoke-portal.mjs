@@ -8,7 +8,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { createHostedServer } from '../dist/hosted-config.js';
 import { createPortalHealthProbe } from '../dist/portal-account.js';
-import { RemoteSessionRegistry } from '../dist/remote-session.js';
 import { createMcpPortalHandler } from '../.portal-smoke/server/services/mcp-bridge/mcp-bridge.service.ts';
 
 const portalBaseUrl = 'https://portal.example.test';
@@ -33,14 +32,18 @@ const check = (name, actual, expected = true) => {
 };
 const handler = createMcpPortalHandler({
   config: { signingSecret, canonicalResource, portalBaseUrl, oauthIssuer,
-    oauthClientIds: ['smoke-client'], keyBindings: { [userA]: 1, [userB]: 2 },
     apiHost: 'https://api.example.test/v1' },
   getClientIdByUserId: async (id) => id === userA ? 101 : id === userB ? 102 : null,
-  getApiKeyById: async (id) => ({ id, client_id: id + 100, aws_key_id: `aws-${id}` }),
+  getApiKeysByClientIds: async (clientIds) => [1, 2].filter((id) => clientIds.includes(id + 100)).map((id) => ({
+    id, client_id: id + 100, aws_key_id: `aws-${id}`, name: `synthetic-key-${id}`,
+    created_at: '2026-10-01T00:00:00Z',
+  })),
   getAwsApiKey: async (id, options) => {
     assert.equal(options.bypassCache, true);
     return { id, enabled: !disabled.has(id), value: keys[id === 'aws-1' ? 1 : 2] };
   },
+  checkDatabaseHealth: async (signal) => { assert.equal(signal.aborted, false); return true; },
+  checkAwsHealth: async (signal) => { assert.equal(signal.aborted, false); return true; },
   fetch: async (url, init) => {
     assert.equal(init.redirect, 'error');
     const headers = new Headers(init.headers);
@@ -101,12 +104,10 @@ const mcpServer = createHostedServer({
   MCP_BILLING_MODE: 'api-balance', MCP_DEPLOYMENT_REVISION: 'a'.repeat(40),
   MCP_CANONICAL_RESOURCE: canonicalResource, PORTAL_SUPABASE_URL: 'https://auth.example.test',
   PORTAL_BASE_URL: portalBaseUrl, MCP_PORTAL_SIGNING_SECRET: signingSecret,
-  MCP_OAUTH_CLIENT_IDS: '["smoke-client"]', MCP_ALLOWED_HOSTS: '["127.0.0.1"]',
-  UPSTASH_REDIS_REST_URL: 'https://synthetic.upstash.io', UPSTASH_REDIS_REST_TOKEN: 'synthetic',
-  MCP_HISTORY_KEY_SECRET: 'synthetic-history-secret-at-least-32-characters',
+  MCP_ALLOWED_HOSTS: '["127.0.0.1"]',
 }, {
   portalFetch, jwks: createLocalJWKSet({ keys: [{ ...jwk, alg: 'ES256', use: 'sig' }] }),
-  sessions: new RemoteSessionRegistry(), registerWork: (work) => registrations.push(work),
+  registerWork: (work) => registrations.push(work),
 });
 const endpoint = new URL('/mcp', await listen(mcpServer));
 const incomingTokens = [];
@@ -136,7 +137,10 @@ try {
   const prompt = await tool(b, 'auto_prompt', { image: 'https://cdn.example.test/input.png' });
   check('prompt remains scalar text', prompt.structuredContent.output, 'synthetic architectural prompt');
   check('user B API key used', calls.at(-1).apiKey, keys[2]);
-  check('user B history isolated', (await tool(b, 'usage_summary')).structuredContent.totalCost, 0.05);
+  check('hosted tools match existing API operations', (await a.listTools()).tools.length, 12);
+  const beforeHistory = calls.length;
+  check('history tools unavailable', (await tool(b, 'usage_summary')).isError, true);
+  check('unavailable history made no API call', calls.length, beforeHistory);
   await assert.rejects(connect(unboundUser));
   checks.push('unbound account rejected');
   const beforeDisable = calls.length;

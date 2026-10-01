@@ -5,7 +5,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from 'jose';
 import { MyArchitectAIClient } from '../dist/client.js';
-import { MediaService } from '../dist/media.js';
 import { createRemoteServer } from '../dist/remote.js';
 
 const resource = 'https://mcp.example.test/mcp';
@@ -13,14 +12,10 @@ const issuer = 'https://auth.example.test';
 const oauthClientId = 'synthetic-smoke-client';
 const apiOrigin = 'https://api.example.test/v1';
 const imageUrl = 'https://cdn.example.test/tiny.png';
-const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-const dataUri = `data:image/png;base64,${tinyPng}`;
-const pngBytes = Buffer.from(tinyPng, 'base64');
 const expectedTools = [
   'animate', 'auto_prompt', 'balance', 'change_textures', 'edit_by_prompt',
-  'list_recent_generations', 'preview_image', 'render_exterior', 'render_interior',
+  'render_exterior', 'render_interior',
   'set_atmosphere', 'style_transfer', 'text_to_image', 'upscale', 'upscale_4k',
-  'usage_summary', 'validate_image_url',
 ];
 const fixtures = [
   ['render_exterior', { image: imageUrl, outputFormat: 'png' }],
@@ -61,13 +56,13 @@ try {
     .setProtectedHeader({ alg: 'ES256', kid: publicJwk.kid, typ: 'JWT' })
     .setIssuer(issuer).setSubject(subject).setAudience(audience).setIssuedAt().setExpirationTime('5m')
     .sign(privateKey);
-  const [tokenA, tokenB, wrongAudience, wrongClient] = await Promise.all([
-    sign('user-a'), sign('user-b'), sign('user-a', 'https://other.example.test/mcp'),
-    sign('user-a', resource, 'unapproved-client'),
+  const [tokenA, tokenB, wrongAudience, blankClient, ordinarySession] = await Promise.all([
+    sign('user-a'), sign('user-b', resource, 'second-native-client'),
+    sign('user-a', 'https://other.example.test/mcp'), sign('user-a', resource, ' '),
+    sign('user-a', 'authenticated'),
   ]);
 
   const upstreamCalls = [];
-  const mediaCalls = [];
   let sequence = 0;
   const apiFetch = async (input, init) => {
     const url = new URL(input);
@@ -98,15 +93,6 @@ try {
       requestId: sequence,
     });
   };
-  const mediaFetch = async (input, init) => {
-    assert.equal(String(input), imageUrl, 'Unexpected image destination');
-    assert.ok(init?.method === 'GET' || init?.method === 'HEAD');
-    mediaCalls.push(init.method);
-    return new Response(init.method === 'HEAD' ? null : pngBytes, {
-      status: 200,
-      headers: { 'content-type': 'image/png', 'content-length': String(pngBytes.length) },
-    });
-  };
   const configFor = (subject) => ({
     apiKey: `synthetic-upstream-${subject === 'user-a' ? 'a' : 'b'}`,
     baseUrl: apiOrigin,
@@ -121,17 +107,11 @@ try {
       canonicalResource: resource,
       issuer,
       jwks: createLocalJWKSet({ keys: [publicJwk] }),
-      allowedOAuthClientIds: [oauthClientId],
       allowedHosts: ['127.0.0.1'],
       requestTimeoutMs: 10_000,
     },
     resolveAccount: ({ subject }) => configFor(subject),
     createClient: (config) => new MyArchitectAIClient(config, apiFetch),
-    createMedia: (config) => new MediaService({
-      timeoutMs: config.timeoutMs,
-      maxBytes: config.maxPreviewBytes,
-      fetchImpl: mediaFetch,
-    }),
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -163,7 +143,8 @@ try {
   check('canonical resource', metadata.resource, resource);
   check('authorization server', metadata.authorization_servers?.includes(issuer));
   check('wrong audience refused', (await post(wrongAudience)).status, 401);
-  check('unapproved OAuth client refused', (await post(wrongClient)).status, 401);
+  check('blank OAuth client refused', (await post(blankClient)).status, 401);
+  check('ordinary session audience refused', (await post(ordinarySession)).status, 401);
   check('malformed token refused', (await post('not-a-jwt')).status, 401);
   check('rejected tokens made no upstream calls', upstreamCalls.length, 0);
 
@@ -190,30 +171,17 @@ try {
     check(`${name} success`, result.isError === true, false);
     check(`${name} structured response`, typeof result.structuredContent?.cost, 'number');
   }
-  const previewData = await tool(userA, 'preview_image', { url: dataUri });
-  check('inline PNG preview', previewData.content?.some((item) => item.type === 'image'));
-  const previewPublic = await tool(userA, 'preview_image', { url: imageUrl });
-  check('public PNG preview', previewPublic.content?.some((item) => item.type === 'image'));
-  const validated = await tool(userA, 'validate_image_url', { url: imageUrl });
-  check('public image validation', validated.structuredContent?.ok && validated.structuredContent?.isImage);
-  const summaryA = await tool(userA, 'usage_summary');
-  check('user A generation count', summaryA.structuredContent?.totalGenerations, fixtures.length);
-  const recentA = await tool(userA, 'list_recent_generations', { limit: 20 });
-  check('user A history count', recentA.structuredContent?.generations?.length, fixtures.length);
-
-  const rejectedPath = await tool(userA, 'preview_image', { url: '/tmp/remote-smoke.png' });
-  check('local path denied', rejectedPath.isError, true);
-  const rejectedOpen = await tool(userA, 'preview_image', { url: imageUrl, open: true });
-  check('browser open denied', rejectedOpen.isError, true);
-  check('denied media requests did not fetch', mediaCalls, ['GET', 'HEAD']);
-  const emptyB = await tool(userB, 'usage_summary');
-  check('user B starts with isolated history', emptyB.structuredContent?.totalGenerations, 0);
-  const recentB = await tool(userB, 'list_recent_generations');
-  check('user B recent history isolated', recentB.structuredContent?.generations?.length, 0);
+  const beforeRemovedTools = upstreamCalls.length;
+  for (const name of ['preview_image', 'save_image', 'validate_image_url', 'usage_summary', 'list_recent_generations']) {
+    const result = await tool(userA, name);
+    check(`${name} unavailable`, result.isError, true);
+    check(`${name} has no fabricated result`, Object.hasOwn(result, 'structuredContent'), false);
+  }
+  check('unavailable tools made no API calls', upstreamCalls.length, beforeRemovedTools);
+  const balanceB = await tool(userB, 'balance');
+  check('user B balance isolated', balanceB.structuredContent?.balance, 24);
   const generatedB = await tool(userB, 'render_exterior', fixtures[0][1]);
   check('user B generation succeeds', generatedB.isError === true, false);
-  const summaryAAfterB = await tool(userA, 'usage_summary');
-  check('user A history unaffected by B', summaryAAfterB.structuredContent?.totalGenerations, fixtures.length);
   check('distinct upstream credentials', new Set(upstreamCalls.map(({ key }) => key)).size, 2);
   check('user B upstream credential', upstreamCalls.at(-1)?.key, 'synthetic-upstream-b');
 
@@ -227,8 +195,6 @@ try {
   });
   check('streamed failure isError', streamedFailure.isError, true);
   check('charged failures called exactly once', upstreamCalls.length - beforeFailures, 2);
-  const afterFailures = await tool(userA, 'usage_summary');
-  check('failed generations counted', afterFailures.structuredContent?.failedGenerations, 2);
 
   process.stdout.write(`${JSON.stringify({ status: 'pass', checks: checks.length, tools: listed.length, toolNames: listed })}\n`);
 } catch (error) {

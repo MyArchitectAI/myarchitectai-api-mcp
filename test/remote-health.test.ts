@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createHostedHealthCheck } from '../src/remote-health.js';
-import { UpstashRemoteSessionProvider } from '../src/remote-history.js';
 
 const jwks = () => Response.json({ keys: [{ kty: 'RSA', kid: 'active-key', n: 'n', e: 'AQAB' }] });
 
@@ -10,7 +9,6 @@ describe('hosted deep health', () => {
     let now = 0;
     let accountCalls = 0;
     let jwksCalls = 0;
-    let redisCalls = 0;
     const check = createHostedHealthCheck({
       jwksUrl: 'https://portal.example/auth/v1/.well-known/jwks.json',
       checkAccount: async (signal) => {
@@ -24,21 +22,20 @@ describe('hosted deep health', () => {
         assert.equal(init?.signal?.aborted, false);
         return jwks();
       }) as typeof fetch,
-      history: { ping: async (signal) => { redisCalls++; assert.equal(signal?.aborted, false); } },
       now: () => now,
     });
     const [first, second] = await Promise.all([check(), check()]);
-    assert.deepEqual(first, { status: 'ok', checks: { account: true, jwks: true, redis: true } });
+    assert.deepEqual(first, { status: 'ok', checks: { account: true, jwks: true } });
     assert.equal(first, second);
-    assert.deepEqual([accountCalls, jwksCalls, redisCalls], [1, 1, 1]);
+    assert.deepEqual([accountCalls, jwksCalls], [1, 1]);
     now = 29_999;
     assert.equal(await check(), first);
     now = 30_000;
     await check();
-    assert.deepEqual([accountCalls, jwksCalls, redisCalls], [2, 2, 2]);
+    assert.deepEqual([accountCalls, jwksCalls], [2, 2]);
   });
 
-  it('fails without an explicit binding and caches failure for only five seconds', async () => {
+  it('fails when Portal is unavailable and caches failure for only five seconds', async () => {
     let now = 0;
     let accountCalls = 0;
     const events: unknown[] = [];
@@ -46,10 +43,10 @@ describe('hosted deep health', () => {
       jwksUrl: 'https://portal.example/jwks',
       checkAccount: async () => { accountCalls++; return false; },
       fetch: (async () => jwks()) as typeof fetch,
-      history: { ping: async () => {} }, now: () => now,
+      now: () => now,
       onError: (event) => events.push(event),
     });
-    assert.deepEqual(await check(), { status: 'unavailable', checks: { account: false, jwks: true, redis: true } });
+    assert.deepEqual(await check(), { status: 'unavailable', checks: { account: false, jwks: true } });
     now = 4_999;
     await check();
     assert.equal(events.length, 1);
@@ -60,10 +57,10 @@ describe('hosted deep health', () => {
     assert.deepEqual(events[0], { fingerprint: 'remote.health.dependencies', check: 'account' });
   });
 
-  it('does not report health when Portal rejects its representative account', async () => {
+  it('does not report health when Portal rejects the dependency check', async () => {
     const check = createHostedHealthCheck({
       jwksUrl: 'https://portal.example/jwks', checkAccount: async () => false,
-      fetch: (async () => jwks()) as typeof fetch, history: { ping: async () => {} },
+      fetch: (async () => jwks()) as typeof fetch,
     });
     assert.equal((await check()).checks.account, false);
   });
@@ -75,10 +72,10 @@ describe('hosted deep health', () => {
     const check = createHostedHealthCheck({
       jwksUrl: 'https://portal.example/jwks', checkAccount: async () => true,
       fetch: (async () => { calls++; return Response.json({ keys: [] }); }) as typeof fetch,
-      history: { ping: async () => {} }, now: () => now,
+      now: () => now,
       onError: (event) => events.push(event),
     });
-    assert.deepEqual(await check(), { status: 'unavailable', checks: { account: true, jwks: false, redis: true } });
+    assert.deepEqual(await check(), { status: 'unavailable', checks: { account: true, jwks: false } });
     now = 5_000;
     await check();
     assert.equal(calls, 2);
@@ -98,38 +95,14 @@ describe('hosted deep health', () => {
         return new Promise<boolean>(() => {});
       },
       fetch: (async () => jwks()) as typeof fetch,
-      history: { ping: async () => {} }, deadlineMs: 15,
+      deadlineMs: 15,
       onError: (event) => events.push(event),
     });
     const started = Date.now();
-    assert.deepEqual(await check(), { status: 'unavailable', checks: { account: false, jwks: true, redis: true } });
+    assert.deepEqual(await check(), { status: 'unavailable', checks: { account: false, jwks: true } });
     assert.ok(Date.now() - started < 1_000);
     assert.equal(observedSignal?.aborted, true);
     assert.deepEqual(events, [{ fingerprint: 'remote.health.dependencies', check: 'deadline' }]);
   });
 
-  it('uses only Redis PING for availability and honors abort without a history-key read', async () => {
-    const commands: unknown[] = [];
-    const provider = new UpstashRemoteSessionProvider({
-      restUrl: 'https://redis.example/', restToken: 'synthetic-token',
-      keySecret: 'x'.repeat(32), namespace: 'mya:tests',
-      fetch: (async (_url, init) => {
-        commands.push(JSON.parse(String(init?.body)) as unknown);
-        return Response.json({ result: 'PONG' });
-      }) as typeof fetch,
-    });
-    await provider.ping();
-    assert.deepEqual(commands, [['PING']]);
-    const controller = new AbortController();
-    controller.abort();
-    const abortingProvider = new UpstashRemoteSessionProvider({
-      restUrl: 'https://redis.example/', restToken: 'synthetic-token',
-      keySecret: 'x'.repeat(32), namespace: 'mya:tests',
-      fetch: (async (_url, init) => {
-        assert.equal(init?.signal?.aborted, true);
-        throw new Error('synthetic transport failure');
-      }) as typeof fetch,
-    });
-    await assert.rejects(abortingProvider.ping(controller.signal), /Remote generation history is unavailable/);
-  });
 });

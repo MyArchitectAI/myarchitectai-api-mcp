@@ -1,7 +1,6 @@
 /**
- * Registers all tools on an {@link McpServer}:
- *  - API operations mapped 1:1 to MyArchitectAI, with generation history, and
- *  - five utilities (preview, save, validate, usage, recent) without API charges.
+ * Registers the API operations on an {@link McpServer}. Stdio also records
+ * local session history and exposes its five existing utility tools.
  *
  * Generation handlers forward their validated arguments (which map 1:1 to the
  * API's JSON body) to {@link MyArchitectAIClient.generate}; `JSON.stringify`
@@ -14,7 +13,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { apiKeyFingerprint, type Config } from './config.js';
 import type { ApiClient, GenerationResult } from './client.js';
 import { classifyImageInput, describeSource, MediaService, openInBrowser, resolveLocalPath } from './media.js';
-import type { SessionHistory } from './session.js';
+import type { SessionStore } from './session.js';
 import { MyArchitectAIError } from './errors.js';
 import {
   animateShape,
@@ -41,15 +40,15 @@ import {
   validateUrlOutputShape,
 } from './schemas.js';
 
-export type RemoteToolConfig = Pick<Config, 'downloadDir' | 'maxPreviewBytes' | 'timeoutMs'>;
-
-export interface ToolDeps {
+type StdioToolDeps = {
   client: ApiClient;
-  session: SessionHistory;
+  session: SessionStore;
   media: MediaService;
-  config: Config | RemoteToolConfig;
-  mode?: 'stdio' | 'remote';
-}
+  config: Config;
+  mode?: 'stdio';
+};
+
+export type ToolDeps = StdioToolDeps | { client: ApiClient; mode: 'remote' };
 
 export const API_TOOL_ENDPOINTS = {
   render_exterior: '/render/exterior',
@@ -81,23 +80,12 @@ const TOOL_NAMES = [
 
 export function registerTools(server: McpServer, deps: ToolDeps): string[] {
   registerGenerationTools(server, deps);
+  if (deps.mode === 'remote') {
+    return Object.keys(API_TOOL_ENDPOINTS);
+  }
   registerQolTools(server, deps);
-  return deps.mode === 'remote' ? TOOL_NAMES.filter((name) => name !== 'save_image') : [...TOOL_NAMES];
+  return [...TOOL_NAMES];
 }
-
-const remotePreviewImageShape = {
-  url: z.string().min(1).describe('A public HTTPS image URL or inline data:image URI.'),
-  open: z.boolean().optional().describe('Browser opening is unavailable in remote mode; true is rejected.'),
-};
-
-const remoteUsageOutputShape = {
-  totalGenerations: usageOutputShape.totalGenerations,
-  failedGenerations: usageOutputShape.failedGenerations,
-  totalCost: usageOutputShape.totalCost,
-  lastKnownBalance: usageOutputShape.lastKnownBalance,
-  byTool: usageOutputShape.byTool,
-  since: usageOutputShape.since,
-};
 
 type GenerationTool = {
   name: Exclude<keyof typeof API_TOOL_ENDPOINTS, 'auto_prompt' | 'balance'>;
@@ -125,7 +113,9 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
     { name: 'set_atmosphere', title: 'Set Atmosphere', inputSchema: setAtmosphereSchema,
       description: 'Relight interiors or change exterior atmosphere. Interior requires lighting only. Exterior requires at least one of timeOfDay, season or weather and rejects lighting.' },
     { name: 'animate', title: 'Animate Image', inputSchema: z.object(animateShape),
-      description: 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL; image preview/save utilities do not support videos. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.' },
+      description: deps.mode === 'remote'
+        ? 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.'
+        : 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL; image preview/save utilities do not support videos. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.' },
     { name: 'upscale', title: 'Upscale to 4K or 8K', inputSchema: upscaleSchema,
       description: 'Upscale to 3840 (4k) or 7680 (8k) pixels on the longer side. Defaults to 4k and jpg. At 8k, only jpg or webp output is available.' },
   ];
@@ -153,10 +143,8 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
       await recordFailure(deps, err);
       return formatError('Auto prompt', err, deps.mode);
     }
-    try {
+    if (deps.mode !== 'remote') {
       await deps.session.record({ tool: 'auto_prompt', ...result, output: [result.output], outputType: 'text' });
-    } catch {
-      // A paid result must reach the caller; the store captures its own error.
     }
     return {
       content: [{ type: 'text', text: `${result.output}\n\nCost: $${formatNumber(result.cost)} USD · Balance: $${formatNumber(result.balance)} USD${requestIdNote(result.requestId)}` }],
@@ -166,13 +154,17 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
 
   server.registerTool('balance', {
     title: 'Check Account Balance',
-    description: 'Fetch the current API account balance in USD without spending USD. Unlike usage_summary, this reads the live balance.',
+    description: deps.mode === 'remote'
+      ? 'Fetch the current API account balance in USD without spending USD.'
+      : 'Fetch the current API account balance in USD without spending USD. Unlike usage_summary, this reads the live balance.',
     inputSchema: {}, outputSchema: balanceOutputShape,
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   }, async () => {
     try {
       const result = await deps.client.balance();
-      await deps.session.updateBalance(result.balance);
+      if (deps.mode !== 'remote') {
+        await deps.session.updateBalance(result.balance);
+      }
       return { content: [{ type: 'text', text: `Account balance: $${formatNumber(result.balance)} USD` }], structuredContent: { ...result } };
     } catch (err) {
       return formatError('Balance check', err, deps.mode);
@@ -180,28 +172,20 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
   });
 }
 
-function registerQolTools(server: McpServer, deps: ToolDeps): void {
+function registerQolTools(server: McpServer, deps: StdioToolDeps): void {
   server.registerTool(
     'preview_image',
     {
       title: 'Preview Image',
-      description: deps.mode === 'remote'
-        ? 'Load a public HTTPS image URL or inline data:image URI for an inline preview. Local files and browser opening are unavailable. Does not charge the API account.'
-        : 'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
+      description: 'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
           'inspecting a generation result before continuing. Accepts a public HTTPS URL, an inline ' +
           'base64-encoded data:image URI, or a local file path. Optionally also opens it in the default ' +
           'browser when a display is available. Does not charge the API account.',
-      inputSchema: deps.mode === 'remote' ? remotePreviewImageShape : previewImageShape,
+      inputSchema: previewImageShape,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ url, open }) => {
       try {
-        if (deps.mode === 'remote' && open === true) {
-          return { content: [{ type: 'text', text: 'Preview failed: browser opening is unavailable in remote mode.' }], isError: true };
-        }
-        if (deps.mode === 'remote' && classifyImageInput(url) === 'path') {
-          return { content: [{ type: 'text', text: 'Preview failed: local files are unavailable in remote mode.' }], isError: true };
-        }
         const fetched = await deps.media.fetchForPreview(url);
         // A data: URI *is* the image, not a path/URL the OS can open — never hand
         // megabytes of base64 to `open`/`xdg-open`, nor tell the user to open it.
@@ -209,7 +193,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
         const isDataUri = kind === 'data';
         // Resolve ~/relative/file:// inputs to an absolute path before the OS
         // opener — `open`/`xdg-open` don't expand `~`.
-        const opened = deps.mode !== 'remote' && open === true && !isDataUri
+        const opened = open === true && !isDataUri
           ? openInBrowser(kind === 'path' ? resolveLocalPath(url) : url)
           : false;
         const note = open === true && isDataUri
@@ -236,36 +220,34 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
     },
   );
 
-  if (deps.mode !== 'remote') {
-    server.registerTool(
-      'save_image',
-      {
-        title: 'Save Image',
-        description:
-          'Save an image to local disk (defaults to the configured download directory) and return the saved file ' +
-          'path. Accepts a public HTTPS URL, an inline data:image/<mime>;base64,<payload> URI, or a local file ' +
-          'path. Generation output URLs are public but may expire, so saving keeps a permanent copy. Consumes no ' +
-          'API balance.',
-        inputSchema: saveImageShape,
-        outputSchema: saveImageOutputShape,
-        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-      },
-      async ({ url, filename, dir }) => {
-        try {
-          const saved = await deps.media.save(url, {
-            dir: dir ?? deps.config.downloadDir,
-            ...(filename !== undefined ? { filename } : {}),
-          });
-          return {
-            content: [{ type: 'text', text: `Saved ${formatBytes(saved.bytes)} (${saved.mimeType}) to ${saved.path}` }],
-            structuredContent: { path: saved.path, bytes: saved.bytes, mimeType: saved.mimeType },
-          };
-        } catch (err) {
-          return formatError('Save', err, deps.mode);
-        }
-      },
-    );
-  }
+  server.registerTool(
+    'save_image',
+    {
+      title: 'Save Image',
+      description:
+        'Save an image to local disk (defaults to the configured download directory) and return the saved file ' +
+        'path. Accepts a public HTTPS URL, an inline data:image/<mime>;base64,<payload> URI, or a local file ' +
+        'path. Generation output URLs are public but may expire, so saving keeps a permanent copy. Consumes no ' +
+        'API balance.',
+      inputSchema: saveImageShape,
+      outputSchema: saveImageOutputShape,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    },
+    async ({ url, filename, dir }) => {
+      try {
+        const saved = await deps.media.save(url, {
+          dir: dir ?? deps.config.downloadDir,
+          ...(filename !== undefined ? { filename } : {}),
+        });
+        return {
+          content: [{ type: 'text', text: `Saved ${formatBytes(saved.bytes)} (${saved.mimeType}) to ${saved.path}` }],
+          structuredContent: { path: saved.path, bytes: saved.bytes, mimeType: saved.mimeType },
+        };
+      } catch (err) {
+        return formatError('Save', err, deps.mode);
+      }
+    },
+  );
 
   server.registerTool(
     'validate_image_url',
@@ -309,7 +291,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       description:
         "Report this session's MyArchitectAI usage: number of generations, total USD spent, the last known " +
         'balance (from the most recent generation — no paid call), and a per-tool breakdown. Does not charge the API account.',
-      outputSchema: deps.mode === 'remote' ? remoteUsageOutputShape : usageOutputShape,
+      outputSchema: usageOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () => {
@@ -319,8 +301,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       } catch (err) {
         return formatError('Usage summary', err, deps.mode);
       }
-      const fingerprint = deps.mode === 'remote' || !('apiKey' in deps.config)
-        ? undefined : apiKeyFingerprint(deps.config.apiKey);
+      const fingerprint = apiKeyFingerprint(deps.config.apiKey);
       const lines = [
         ...(fingerprint === undefined ? [] : [`API key: ${fingerprint}`]),
         `Generations this session: ${summary.totalGenerations}`,
@@ -392,7 +373,7 @@ async function generate(
     await recordFailure(deps, err);
     return formatError(label, err, deps.mode);
   }
-  try {
+  if (deps.mode !== 'remote') {
     await deps.session.record({
       tool: toolName,
       output: result.output,
@@ -401,19 +382,13 @@ async function generate(
       ...(result.requestId !== undefined ? { requestId: result.requestId } : {}),
       outputType: toolName === 'animate' ? 'video' : 'image',
     });
-  } catch {
-    // A paid result must reach the caller; the store captures its own error.
   }
   return formatSuccess(label, result, toolName === 'animate' ? 'video' : 'image');
 }
 
 async function recordFailure(deps: ToolDeps, err: unknown): Promise<void> {
-  if (err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
-    try {
-      await deps.session.recordFailure(err.balance);
-    } catch {
-      // Preserve the original API rejection when shared history fails.
-    }
+  if (deps.mode !== 'remote' && err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
+    await deps.session.recordFailure(err.balance);
   }
 }
 

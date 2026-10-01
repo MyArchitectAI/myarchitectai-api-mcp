@@ -26,7 +26,6 @@ export const createPortalAccountResolver = (
         transport: (path, input, signal) => request('execute',
           { path, ...(input === undefined ? {} : { body: input }) }, identity, signal),
       }),
-      config: { downloadDir: 'renders', maxPreviewBytes: 1_000_000, timeoutMs: 120_000 },
     };
   };
 };
