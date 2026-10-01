@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .vercel/
+.portal-smoke
 coverage/
 renders/
 *.log

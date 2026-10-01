@@ -3,19 +3,14 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { createHostedServer } from '../dist/hosted-config.js';
 import { createPortalHealthProbe } from '../dist/portal-account.js';
 import { RemoteSessionRegistry } from '../dist/remote-session.js';
+import { createMcpPortalHandler } from '../.portal-smoke/server/services/mcp-bridge/mcp-bridge.service.ts';
 
-assert.ok(process.argv[2], 'Pass the API Portal checkout containing the companion bridge');
-const portalModule = await import(pathToFileURL(resolve(process.argv[2],
-  'server/services/mcp-bridge/mcp-bridge.service.ts')).href);
-const { createMcpPortalHandler } = portalModule.default ?? portalModule;
 const portalBaseUrl = 'https://portal.example.test';
 const canonicalResource = 'https://mcp.example.test/mcp';
 const oauthIssuer = 'https://auth.example.test/auth/v1';
@@ -93,7 +88,12 @@ const portalFetch = async (url, init) => {
   assert.equal(headers.has('x-api-key'), false);
   assert.equal(headers.has('cookie'), false);
   receivedAssertions.push(headers.get('authorization'));
-  return fetch(`${portalAddress}${new URL(url).pathname}`, init);
+  switch (new URL(url).pathname) {
+    case '/api/mcp/account': return fetch(`${portalAddress}/api/mcp/account`, init);
+    case '/api/mcp/execute': return fetch(`${portalAddress}/api/mcp/execute`, init);
+    case '/api/mcp/health': return fetch(`${portalAddress}/api/mcp/health`, init);
+    default: throw new Error('Unexpected Portal operation');
+  }
 };
 const { publicKey, privateKey } = await generateKeyPair('ES256');
 const jwk = await exportJWK(publicKey);

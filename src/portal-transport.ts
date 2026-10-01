@@ -37,7 +37,7 @@ export const createPortalRequest = (options: PortalOptions, dependencies: Portal
   const signingKey = new TextEncoder().encode(options.signingSecret);
   return async (operation, body, identity, callerSignal) => {
     if (operation !== 'health' && (!identity || identity.issuer !== options.issuer ||
-        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(identity.subject) || !identity.clientId.trim())) {
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(identity.subject) || !identity.clientId.trim())) {
       throw new Error('Invalid Portal delegation identity');
     }
     if (operation === 'health' && identity) {
@@ -56,8 +56,8 @@ export const createPortalRequest = (options: PortalOptions, dependencies: Portal
       .setExpirationTime(issuedAt + 60).setJti(randomUUID()).sign(signingKey);
     const controller = new AbortController();
     const abort = (): void => { controller.abort(); };
-    callerSignal?.addEventListener('abort', abort, { once: true });
-    if (callerSignal?.aborted) { abort(); }
+    callerSignal.addEventListener('abort', abort, { once: true });
+    if (callerSignal.aborted) { abort(); }
     const timer = setTimeout(abort, operation === 'execute' ? 120_000 : 5_000);
     let onAbort: () => void = () => undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
@@ -82,7 +82,7 @@ export const createPortalRequest = (options: PortalOptions, dependencies: Portal
       return await Promise.race([work(), aborted]);
     } finally {
       clearTimeout(timer);
-      callerSignal?.removeEventListener('abort', abort);
+      callerSignal.removeEventListener('abort', abort);
       controller.signal.removeEventListener('abort', onAbort);
     }
   };
