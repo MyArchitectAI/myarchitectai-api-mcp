@@ -1,0 +1,138 @@
+name: deploy-prod
+
+# Only an approved merge to main (or a manual rerun of its current head) can
+# request production. Vercel Git auto-deploy must remain disabled for this project.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: mcp-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Require current main and deployment credentials
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo '::error::Production deployment requires the main branch.'
+            exit 1
+          fi
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing GitHub secret $name; create the company Vercel project and configure the secret before deploying."
+              exit 1
+            fi
+          done
+
+      - name: Checkout exact requested revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and check types
+        run: npm run build && npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit and boundary tests
+        run: npm test && node --test scripts/verify-deployment.test.mjs
+
+      - name: Synthetic remote smoke
+        run: npm run smoke:remote
+
+      - name: Check published API contract
+        run: npm run api:check:live
+
+      # Native root server.ts support landed after the older CLI pin used by the
+      # main app; this exact version is present on npm and runs on Node 24.
+      - name: Install pinned Vercel CLI
+        run: npm install --global vercel@61.0.0
+
+      - name: Require tested source to remain current main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || [ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]; then
+            echo '::error::Current origin/main differs from this tested revision; a newer run must deploy instead.'
+            exit 1
+          fi
+
+      - name: Deploy source to company Vercel production
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          deployment_url="$(vercel deploy --prod --yes --token "$VERCEL_TOKEN" \
+            --build-env "MCP_DEPLOYMENT_REVISION=$GITHUB_SHA" \
+            --env "MCP_DEPLOYMENT_REVISION=$GITHUB_SHA")"
+          DEPLOYMENT_URL="$deployment_url" node --input-type=module -e '
+            const raw = process.env.DEPLOYMENT_URL;
+            if (!raw || /[\r\n]/.test(raw)) process.exit(1);
+            const url = new URL(raw);
+            if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) process.exit(1);
+          '
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "Vercel accepted production deployment: $deployment_url"
+
+      - name: Verify canonical live boundary at exact revision
+        id: verify
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if node scripts/verify-deployment.mjs "$GITHUB_SHA"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 8 ]; then sleep 5; fi
+          done
+          echo '::error::Vercel accepted a production deployment, but the canonical live boundary was not verified.'
+          exit 1
+
+      - name: Deployment receipt
+        if: always()
+        env:
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          {
+            echo '### MCP production deployment'
+            echo "- Source: \`$GITHUB_SHA\`"
+            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Vercel deploy step: $DEPLOY_OUTCOME"
+            if [ -n "$DEPLOY_URL" ]; then echo "- Deployment: $DEPLOY_URL"; fi
+            echo "- Canonical live boundary: $VERIFY_OUTCOME"
+            if [ "$VERIFY_OUTCOME" = success ]; then
+              echo '- Observed: https://mcp.myarchitectai.com/health served this revision; OAuth discovery and unauthenticated challenge matched the canonical MCP resource.'
+            elif [ "$DEPLOY_OUTCOME" = success ]; then
+              echo '- Vercel accepted a deployment, but live verification failed or did not run. Production state requires investigation.'
+            else
+              echo '- No successful deploy command was recorded; production state is unverified.'
+            fi
+            echo '- This receipt does not prove OAuth consent, account billing, or authenticated tool execution.'
+          } >> "$GITHUB_STEP_SUMMARY"

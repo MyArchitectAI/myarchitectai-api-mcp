@@ -27,7 +27,7 @@ edit images, change textures and atmosphere, animate renders, generate prompts, 
 | `upscale_4k` | Legacy 4K endpoint; prefer `upscale` | `image` | `outputFormat` |
 | `balance` | Read the current account balance without a charge | — | — |
 
-**Quality-of-life tools** (no API charge):
+**Stdio quality-of-life tools** (no API charge):
 
 | Tool | What it does |
 | --- | --- |
@@ -41,7 +41,7 @@ Image inputs accept a public HTTPS URL reachable by MyArchitectAI or an inline `
 
 The API responds synchronously, streaming while it works. Animation typically takes 60–90 seconds; configure your MCP host's tool timeout to accommodate it. Image utilities do not preview or download videos; open the returned animation URL in a video-capable client.
 
-The server exposes **17 tools**, covering all **12 API operations** in the [published API reference](https://portal.myarchitectai.com/docs). [API contract maintenance](docs/API-CONTRACT.md) describes the snapshot and automated drift checks.
+The stdio server exposes **17 tools**, covering all **12 API operations** in the [published API reference](https://portal.myarchitectai.com/docs). The hosted connector exposes those **12 API operations**. [API contract maintenance](docs/API-CONTRACT.md) describes the snapshot and automated drift checks.
 
 ## Install
 
@@ -133,11 +133,9 @@ CI checks the live contract on PRs, main pushes and manual dispatch. A spec chan
 
 ## Authentication
 
-The server authenticates with an **API key** (`x-api-key`) — the only scheme the MyArchitectAI API
-supports. It runs locally over stdio, so the key stays in your environment. There is no OAuth
-provider on the API side; OAuth would only become relevant if this were hosted as a remote MCP
-server, and even then the server would still call the API with a key. Credential handling is
-isolated in `src/config.ts` and the client's header injection.
+The stdio server authenticates to the MyArchitectAI API with an **API key** (`x-api-key`) from your environment. Credential handling is isolated in `src/config.ts` and the client's header injection. The executable is `myarchitectai-mcp`; the generic `mcp` alias has been removed. Existing `npx -y @myarchitectai/mcp` configurations still select the package's single executable.
+
+The repository also prepares an OAuth-protected stateless Streamable HTTP connector for the company's Vercel account. It verifies an audience-bound OAuth token and delegates the 12 existing API operations to the API Portal backend with a separate signed internal request. The hosted runtime uses API Portal accounts and API balance. Portal retains customer keys, ownership checks and billing. Hosted MCP has no history store, Redis, or local media utilities; stdio retains its existing tools and local history. No public connector has been deployed, and real OAuth consent and Claude acceptance remain pending. See the [integration contract](docs/REMOTE-CONNECTOR.md), [hosted runtime configuration](docs/HOSTED-RUNTIME.md), and [production deployment setup](docs/DEPLOYMENT.md). The deployment workflow is production-only; there are no preview deployments. Hosted paid calls through Portal are never automatically retried, because an intermediary error cannot prove that generation was uncharged.
 
 ## Contributing
 
@@ -152,6 +150,7 @@ npm run build       # compile TypeScript to dist/
 npm run typecheck   # strict type-check of src + tests
 npm test            # unit + integration tests (node:test)
 node scripts/smoke.mjs   # spawn the built server and list its tools over stdio
+npm run smoke:remote     # built HTTP server, synthetic accounts only; no API charges
 ```
 
 Run `npm run build && npm run typecheck && npm test` before submitting a PR.

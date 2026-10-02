@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "service": "myarchitectai-mcp",
+  "deployment": {
+    "provider": "vercel",
+    "owner": "MyArchitectAI company team",
+    "productionOrigin": "https://mcp.myarchitectai.com"
+  },
+  "health": {
+    "process": "/health",
+    "deep": "/health/deep",
+    "deepAuthHeader": "X-Obs-Token",
+    "deepChecks": [
+      "account",
+      "jwks"
+    ]
+  },
+  "dependencies": [
+    {
+      "service": "api_portal",
+      "deepCheck": "account",
+      "readOperations": [
+        "POST /api/mcp/health"
+      ],
+      "timeoutMs": 5000,
+      "maxAttempts": 1,
+      "note": "Portal reports independent database/AWS dependency health using its existing access; this does not verify user account admission. Generation uses POST /api/mcp/execute with a 120000ms deadline and no paid retries."
+    },
+    {
+      "service": "supabase_jwks",
+      "deepCheck": "jwks",
+      "readOperations": [
+        "GET {issuer}/.well-known/jwks.json"
+      ],
+      "timeoutMs": 5000,
+      "maxAttempts": 1,
+      "note": "Authentication key resolution may use jose's cache; its resolution event is not an HTTP-egress claim."
+    }
+  ]
+}

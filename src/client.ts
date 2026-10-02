@@ -43,15 +43,22 @@ export type BalanceResult = { balance: number };
 /** Minimal `fetch` signature so tests can inject a stub. */
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
+/** An internal transport owns its credentials; it never receives a customer's API key. */
+export type TransportClientConfig = Pick<Config, 'baseUrl' | 'timeoutMs' | 'maxRetries'> & {
+  transport: (path: string, body: Record<string, unknown> | undefined, signal: AbortSignal) => Promise<Response>;
+};
+
+export type ApiClient = Pick<MyArchitectAIClient, 'generate' | 'autoPrompt' | 'balance'>;
+
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 8_000;
 
 export class MyArchitectAIClient {
-  readonly #config: Config;
+  readonly #config: Config | TransportClientConfig;
   readonly #fetch: FetchLike;
 
-  constructor(config: Config, fetchImpl?: FetchLike) {
+  constructor(config: Config | TransportClientConfig, fetchImpl?: FetchLike) {
     this.#config = config;
     this.#fetch = fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
@@ -101,7 +108,10 @@ export class MyArchitectAIClient {
           const error = err instanceof MyArchitectAIError ? err : new NetworkError(`Unexpected client error: ${describe(err)}`, err);
           // Only these paid-request failures are explicitly documented as never
           // charged. Balance is read-only; other uncertain outcomes are not replayed.
-          const canRetry = path === '/balance' || error.status === 429 || error.status === 502;
+          // An intermediary's 429/502 may occur after a paid upstream call.
+          // The direct API's uncharged-response guarantee does not extend to it.
+          const canRetry = path === '/balance' || (!('transport' in this.#config) &&
+            (error.status === 429 || error.status === 502));
           if (controller.signal.aborted) {
             throw timeout();
           }
@@ -126,7 +136,9 @@ export class MyArchitectAIClient {
     let status: number | undefined;
 
     try {
-      const response = await this.#fetch(url, {
+      const response = 'transport' in this.#config
+        ? await this.#config.transport(path, body, signal)
+        : await this.#fetch(url, {
         method: 'POST',
         headers: {
           'x-api-key': this.#config.apiKey,

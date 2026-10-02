@@ -1,7 +1,6 @@
 /**
- * Registers all tools on an {@link McpServer}:
- *  - API operations mapped 1:1 to MyArchitectAI, with generation history, and
- *  - five utilities (preview, save, validate, usage, recent) without API charges.
+ * Registers the API operations on an {@link McpServer}. Stdio also records
+ * local session history and exposes its five existing utility tools.
  *
  * Generation handlers forward their validated arguments (which map 1:1 to the
  * API's JSON body) to {@link MyArchitectAIClient.generate}; `JSON.stringify`
@@ -12,7 +11,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { apiKeyFingerprint, type Config } from './config.js';
-import type { GenerationResult, MyArchitectAIClient } from './client.js';
+import type { ApiClient, GenerationResult } from './client.js';
 import { classifyImageInput, describeSource, MediaService, openInBrowser, resolveLocalPath } from './media.js';
 import type { SessionStore } from './session.js';
 import { MyArchitectAIError } from './errors.js';
@@ -41,12 +40,15 @@ import {
   validateUrlOutputShape,
 } from './schemas.js';
 
-export interface ToolDeps {
-  client: MyArchitectAIClient;
+type StdioToolDeps = {
+  client: ApiClient;
   session: SessionStore;
   media: MediaService;
   config: Config;
-}
+  mode?: 'stdio';
+};
+
+export type ToolDeps = StdioToolDeps | { client: ApiClient; mode: 'remote' };
 
 export const API_TOOL_ENDPOINTS = {
   render_exterior: '/render/exterior',
@@ -78,6 +80,9 @@ const TOOL_NAMES = [
 
 export function registerTools(server: McpServer, deps: ToolDeps): string[] {
   registerGenerationTools(server, deps);
+  if (deps.mode === 'remote') {
+    return Object.keys(API_TOOL_ENDPOINTS);
+  }
   registerQolTools(server, deps);
   return [...TOOL_NAMES];
 }
@@ -108,7 +113,9 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
     { name: 'set_atmosphere', title: 'Set Atmosphere', inputSchema: setAtmosphereSchema,
       description: 'Relight interiors or change exterior atmosphere. Interior requires lighting only. Exterior requires at least one of timeOfDay, season or weather and rejects lighting.' },
     { name: 'animate', title: 'Animate Image', inputSchema: z.object(animateShape),
-      description: 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL; image preview/save utilities do not support videos. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.' },
+      description: deps.mode === 'remote'
+        ? 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.'
+        : 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL; image preview/save utilities do not support videos. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.' },
     { name: 'upscale', title: 'Upscale to 4K or 8K', inputSchema: upscaleSchema,
       description: 'Upscale to 3840 (4k) or 7680 (8k) pixels on the longer side. Defaults to 4k and jpg. At 8k, only jpg or webp output is available.' },
   ];
@@ -129,45 +136,51 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
     outputSchema: autoPromptOutputShape,
     annotations: GENERATION_ANNOTATIONS,
   }, async (args) => {
+    let result;
     try {
-      const result = await deps.client.autoPrompt(args);
-      await deps.session.record({ tool: 'auto_prompt', ...result, output: [result.output], outputType: 'text' });
-      return {
-        content: [{ type: 'text', text: `${result.output}\n\nCost: $${formatNumber(result.cost)} USD · Balance: $${formatNumber(result.balance)} USD${requestIdNote(result.requestId)}` }],
-        structuredContent: { ...result },
-      };
+      result = await deps.client.autoPrompt(args);
     } catch (err) {
       recordFailure(deps, err);
-      return formatError('Auto prompt', err);
+      return formatError('Auto prompt', err, deps.mode);
     }
+    if (deps.mode !== 'remote') {
+      await deps.session.record({ tool: 'auto_prompt', ...result, output: [result.output], outputType: 'text' });
+    }
+    return {
+      content: [{ type: 'text', text: `${result.output}\n\nCost: $${formatNumber(result.cost)} USD · Balance: $${formatNumber(result.balance)} USD${requestIdNote(result.requestId)}` }],
+      structuredContent: { ...result },
+    };
   });
 
   server.registerTool('balance', {
     title: 'Check Account Balance',
-    description: 'Fetch the current API account balance in USD without spending USD. Unlike usage_summary, this reads the live balance.',
+    description: deps.mode === 'remote'
+      ? 'Fetch the current API account balance in USD without spending USD.'
+      : 'Fetch the current API account balance in USD without spending USD. Unlike usage_summary, this reads the live balance.',
     inputSchema: {}, outputSchema: balanceOutputShape,
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   }, async () => {
     try {
       const result = await deps.client.balance();
-      deps.session.updateBalance(result.balance);
+      if (deps.mode !== 'remote') {
+        deps.session.updateBalance(result.balance);
+      }
       return { content: [{ type: 'text', text: `Account balance: $${formatNumber(result.balance)} USD` }], structuredContent: { ...result } };
     } catch (err) {
-      return formatError('Balance check', err);
+      return formatError('Balance check', err, deps.mode);
     }
   });
 }
 
-function registerQolTools(server: McpServer, deps: ToolDeps): void {
+function registerQolTools(server: McpServer, deps: StdioToolDeps): void {
   server.registerTool(
     'preview_image',
     {
       title: 'Preview Image',
-      description:
-        'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
-        'inspecting a generation result before continuing. Accepts a public HTTPS URL, an inline ' +
-        'data:image/<mime>;base64,<payload> URI, or a local file path. Optionally also opens it in the default ' +
-        'browser when a display is available. Does not charge the API account.',
+      description: 'Load an image and return it inline so you (the agent) and GUI clients can actually see it — useful for ' +
+          'inspecting a generation result before continuing. Accepts a public HTTPS URL, an inline ' +
+          'base64-encoded data:image URI, or a local file path. Optionally also opens it in the default ' +
+          'browser when a display is available. Does not charge the API account.',
       inputSchema: previewImageShape,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
@@ -202,7 +215,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
           ],
         };
       } catch (err) {
-        return formatError('Preview', err);
+        return formatError('Preview', err, deps.mode);
       }
     },
   );
@@ -231,7 +244,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
           structuredContent: { path: saved.path, bytes: saved.bytes, mimeType: saved.mimeType },
         };
       } catch (err) {
-        return formatError('Save', err);
+        return formatError('Save', err, deps.mode);
       }
     },
   );
@@ -266,7 +279,7 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
           },
         };
       } catch (err) {
-        return formatError('Validate', err);
+        return formatError('Validate', err, deps.mode);
       }
     },
   );
@@ -281,8 +294,13 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       outputSchema: usageOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async () => {
-      const summary = deps.session.summary();
+    () => {
+      let summary;
+      try {
+        summary = deps.session.summary();
+      } catch (err) {
+        return formatError('Usage summary', err, deps.mode);
+      }
       const fingerprint = apiKeyFingerprint(deps.config.apiKey);
       const lines = [
         `API key: ${fingerprint}`,
@@ -320,8 +338,13 @@ function registerQolTools(server: McpServer, deps: ToolDeps): void {
       outputSchema: listRecentOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ limit }) => {
-      const generations = deps.session.recent(limit ?? 10);
+    ({ limit }) => {
+      let generations;
+      try {
+        generations = deps.session.recent(limit ?? 10);
+      } catch (err) {
+        return formatError('Recent generations', err, deps.mode);
+      }
       const lines = generations.length
         ? generations.map(
             (record) =>
@@ -341,8 +364,16 @@ async function generate(
   label: string,
   body: Record<string, unknown>,
 ): Promise<CallToolResult> {
+  let result;
   try {
-    const result = await deps.client.generate(path, body);
+    result = await deps.client.generate(path, body);
+  } catch (err) {
+    // Count API/validation rejections (not transport errors), preserving any
+    // balance the API reported without masking the original API error.
+    recordFailure(deps, err);
+    return formatError(label, err, deps.mode);
+  }
+  if (deps.mode !== 'remote') {
     await deps.session.record({
       tool: toolName,
       output: result.output,
@@ -351,17 +382,12 @@ async function generate(
       ...(result.requestId !== undefined ? { requestId: result.requestId } : {}),
       outputType: toolName === 'animate' ? 'video' : 'image',
     });
-    return formatSuccess(label, result, toolName === 'animate' ? 'video' : 'image');
-  } catch (err) {
-    // Count API/validation rejections (not transport errors) and capture any
-    // balance the API reported on the failed call.
-    recordFailure(deps, err);
-    return formatError(label, err);
   }
+  return formatSuccess(label, result, toolName === 'animate' ? 'video' : 'image');
 }
 
 function recordFailure(deps: ToolDeps, err: unknown): void {
-  if (err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
+  if (deps.mode !== 'remote' && err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
     deps.session.recordFailure(err.balance);
   }
 }
@@ -386,7 +412,11 @@ function formatSuccess(label: string, result: GenerationResult, outputType: 'ima
   };
 }
 
-function formatError(label: string, err: unknown): CallToolResult {
+function formatError(label: string, err: unknown, mode: ToolDeps['mode']): CallToolResult {
+  if (mode === 'remote') {
+    const status = err instanceof MyArchitectAIError && err.status !== undefined ? ` (HTTP ${err.status})` : '';
+    return { content: [{ type: 'text', text: `${label} failed${status}.` }], isError: true };
+  }
   if (err instanceof MyArchitectAIError) {
     const meta: string[] = [];
     if (err.requestId !== undefined) meta.push(`request ID ${err.requestId}`);

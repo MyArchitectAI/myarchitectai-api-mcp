@@ -8,7 +8,7 @@ import type { FetchLike } from '../src/client.js';
 import type { Config } from '../src/config.js';
 import { MediaService } from '../src/media.js';
 import { SessionStore } from '../src/session.js';
-import { registerTools } from '../src/tools.js';
+import { API_TOOL_ENDPOINTS, registerTools } from '../src/tools.js';
 
 type TextBlock = { type: 'text'; text: string };
 
@@ -22,16 +22,20 @@ const testConfig: Config = {
   stateFile: undefined,
 };
 
-function buildServer(fetchImpl: FetchLike): McpServer {
+function buildServer(fetchImpl: FetchLike, mode: 'stdio' | 'remote' = 'stdio'): McpServer {
   const client = new MyArchitectAIClient(testConfig, fetchImpl);
+  const server = new McpServer({ name: 'test', version: '0.0.0' });
+  if (mode === 'remote') {
+    registerTools(server, { client, mode });
+    return server;
+  }
   const session = new SessionStore();
   const media = new MediaService({
     timeoutMs: testConfig.timeoutMs,
     maxBytes: testConfig.maxPreviewBytes,
     fetchImpl,
   });
-  const server = new McpServer({ name: 'test', version: '0.0.0' });
-  registerTools(server, { client, session, media, config: testConfig });
+  registerTools(server, { client, session, media, config: testConfig, mode });
   return server;
 }
 
@@ -48,6 +52,20 @@ function firstText(content: unknown): string {
 }
 
 describe('MCP server integration', () => {
+  it('remote tool set exposes only the existing API operations', async () => {
+    const client = await connect(buildServer(async () => new Response('{}'), 'remote'));
+    const { tools } = await client.listTools();
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), Object.keys(API_TOOL_ENDPOINTS).sort());
+    const file = await client.callTool({ name: 'preview_image', arguments: { url: '/etc/passwd' } });
+    assert.equal(file.isError, true);
+    const open = await client.callTool({ name: 'preview_image', arguments: { url: 'data:image/png;base64,AQID', open: true } });
+    assert.equal(open.isError, true);
+    const usage = await client.callTool({ name: 'usage_summary', arguments: {} });
+    assert.equal(usage.isError, true);
+    assert.equal(usage.structuredContent, undefined);
+    await client.close();
+  });
+
   it('lists all generation and QoL tools', async () => {
     const client = await connect(buildServer(async () => new Response('{}')));
     const { tools } = await client.listTools();

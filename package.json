@@ -23,7 +23,6 @@
   },
   "main": "dist/index.js",
   "bin": {
-    "mcp": "dist/index.js",
     "myarchitectai-mcp": "dist/index.js"
   },
   "files": [
@@ -32,7 +31,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.14.1"
   },
   "publishConfig": {
     "access": "public"
@@ -40,21 +39,25 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",
-    "lint": "eslint src test",
-    "lint:fix": "eslint src test --fix",
+    "lint": "eslint server.ts src test",
+    "lint:fix": "eslint server.ts src test --fix",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "node --import tsx --test test/*.test.ts",
+    "smoke:remote": "node scripts/smoke-remote.mjs",
     "prepublishOnly": "npm run build",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "release:tag": "git tag \"v$npm_package_version\" && git push origin \"v$npm_package_version\"",
     "api:check": "node scripts/api-contract.mjs",
     "api:check:live": "node scripts/api-contract.mjs --live",
-    "api:update": "node scripts/api-contract.mjs --update"
+    "api:update": "node scripts/api-contract.mjs --update",
+    "smoke:portal": "node --import tsx scripts/smoke-portal.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vercel/functions": "2.2.13",
+    "jose": "5.10.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

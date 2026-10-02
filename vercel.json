@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "node",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".",
+  "git": {
+    "deploymentEnabled": false
+  },
+  "functions": {
+    "server.ts": {
+      "maxDuration": 300
+    }
+  }
+}

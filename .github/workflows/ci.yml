@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 # Three readable checks: `lint`, `build`, `test`. `build` and `test` each
-# exercise Node 18/20/22 within a single job, so each stays one status check.
+# exercise Node 18/20/22/24 within a single job, so each stays one status check.
 # Dependencies are pure JS (no native addons), so a single `npm ci` is reused
 # across versions — only the runtime is switched between runs.
 
@@ -48,6 +48,11 @@ jobs:
           node-version: 22.x
       - name: build + typecheck (Node 22.x)
         run: npm run build && npm run typecheck
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: build + typecheck (Node 24.x)
+        run: npm run build && npm run typecheck
 
   test:
     runs-on: ubuntu-latest
@@ -70,6 +75,13 @@ jobs:
           node-version: 22.x
       - name: test (Node 22.x)
         run: npm test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: test (Node 24.x)
+        run: npm test
+      - name: deploy-contract (live verifier fixtures)
+        run: node --test scripts/verify-deployment.test.mjs
 
   api-contract:
     runs-on: ubuntu-latest
