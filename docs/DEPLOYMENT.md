@@ -4,7 +4,7 @@ This repository prepares a production pipeline for the remote MCP boundary. The 
 
 ## Production configuration
 
-1. Use `myarchitectai-mcp` in the **MyArchitectAI company Vercel team**. Its root directory is the repository root, production branch is `main`, and Node.js version is **24.x**. A Git connection is optional because the workflow identifies the existing project by ID. Vercel detects the root `server.ts` shim, which imports the hosted implementation at `src/server.ts`; `src/index.ts` remains the stdio CLI entry. Do not select a static output directory or a prebuilt deployment path. The workflow sends source to Vercel for its remote build.
+1. Use `myarchitectai-mcp` in the **MyArchitectAI company Vercel team**. Its root directory is the repository root, production branch is `main`, and Node.js version is **24.x**. A Git connection is optional because the workflow identifies the existing project by ID. The repository sets `framework: "node"` to select Vercel's native Node backend. `framework: null` selects Other and restricts function discovery to the `api` directory, so it cannot match this server's function configuration. Vercel detects the root `server.ts` shim, which imports the hosted implementation at `src/server.ts`; `src/index.ts` remains the stdio CLI entry. Do not select a static output directory or a prebuilt deployment path. The workflow sends source to Vercel for its remote build.
 2. Keep automatic Git deployments disabled for **all** branches. The repository's `vercel.json` sets `git.deploymentEnabled` to `false`; if Git is connected, verify that project Git settings do not create separate deployments. The only configured deployment path is `.github/workflows/deploy-prod.yml` after a `main` push or a manual run against current `main`. No preview deployment is requested by this repository.
 3. Assign `mcp.myarchitectai.com` as the production domain in Vercel and configure the company DNS for that domain. Confirm HTTPS reaches this project before interpreting a live verifier result.
 4. Add these **GitHub Actions secrets** to `MyArchitectAI/myarchitectai-api-mcp`: `VERCEL_TOKEN` (a company team token permitted to deploy this project), `VERCEL_ORG_ID` (company team ID), and `VERCEL_PROJECT_ID` (this project's ID). The workflow fails before build or deployment if one is missing. It uses these values to select the existing project without `vercel link` or local `.vercel` files.
@@ -25,5 +25,7 @@ This check proves only the deployed revision and public authentication boundary.
 ## References
 
 - [Vercel native Node server detection](https://vercel.com/changelog/deploy-node-servers-with-zero-configuration)
+- [Vercel native Node runtime and server entrypoints](https://vercel.com/docs/functions/runtimes/node-js#deploy-a-nodejs-server)
+- [Vercel framework preset configuration](https://vercel.com/docs/project-configuration/vercel-json#framework)
 - [Vercel CLI source deployment and revision environment options](https://vercel.com/docs/cli/deploy)
 - [Vercel Git auto-deployment configuration](https://vercel.com/docs/project-configuration/git-configuration)
