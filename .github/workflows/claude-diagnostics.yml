@@ -1,0 +1,31 @@
+name: Claude authentication diagnostic
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/claude-diagnostics.yml
+      - scripts/claude-check.mjs
+      - scripts/claude-check.test.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  authentication:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Verify safe failure reporting
+        run: node --test scripts/claude-check.test.mjs
+      - name: Install the Claude version used by the failing runs
+        run: npm install --prefix "$RUNNER_TEMP/claude-diagnostic" --no-audit --no-fund @anthropic-ai/claude-code@2.1.287
+      - name: Check the existing OAuth credential without repository tools
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: node scripts/claude-check.mjs probe "$RUNNER_TEMP/claude-diagnostic/node_modules/.bin/claude"
