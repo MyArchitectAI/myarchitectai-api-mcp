@@ -5,8 +5,10 @@ import { classify } from './claude-check.mjs';
 test('reports startup failures without echoing provider messages or credentials', () => {
   for (const [detail, expected] of [
     ['API Error: 401 authentication_error OAuth token expired secret-fixture', 'authentication'],
-    ['API Error: 429 rate_limit_error secret-fixture', 'quota'],
-    ["You've hit your limit secret-fixture", 'quota'],
+    ['API Error: 429 rate_limit_error secret-fixture', 'rate_limit'],
+    ['API Error: 429 rate_limit_error: rate limit reached secret-fixture', 'rate_limit'],
+    ["You've hit your limit secret-fixture", 'usage_limit'],
+    ['Credit balance is too low secret-fixture', 'credit_balance'],
     ['API Error: model not found secret-fixture', 'model'],
     ['system: Invalid model name secret-fixture', 'model'],
     ['Connection error secret-fixture', 'network'],
