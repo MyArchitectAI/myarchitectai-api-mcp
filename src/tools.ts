@@ -14,7 +14,7 @@ import { apiKeyFingerprint, type Config } from './config.js';
 import type { ApiClient, GenerationResult } from './client.js';
 import { classifyImageInput, describeSource, MediaService, openInBrowser, resolveLocalPath } from './media.js';
 import type { SessionStore } from './session.js';
-import { isSafetyErrorCode, MyArchitectAIError, SAFETY_ERROR_MESSAGES } from './errors.js';
+import { isSafetyErrorCode, MyArchitectAIError, safetyErrorMessage } from './errors.js';
 import {
   animateShape,
   autoPromptShape,
@@ -427,7 +427,7 @@ function formatError(label: string, err: unknown, mode: ToolDeps['mode']): CallT
     if (typeof err.cost === 'number') meta.push(`cost ${formatNumber(err.cost)}`);
 
     const detail = meta.length > 0 ? `\n\n(${meta.join(' · ')})` : '';
-    const message = safetyCode === undefined ? err.message : SAFETY_ERROR_MESSAGES[safetyCode];
+    const message = safetyCode === undefined ? err.message : safetyErrorMessage(safetyCode);
     if (safetyCode === undefined) {
       return { content: [{ type: 'text', text: `${label} failed: ${message}${detail}` }], isError: true };
     }

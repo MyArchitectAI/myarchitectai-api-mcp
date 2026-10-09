@@ -28,6 +28,15 @@ export function isSafetyErrorCode(code: unknown): code is SafetyErrorCode {
   return code === 'CONTENT_POLICY_VIOLATION' || code === 'SAFETY_CHECK_UNAVAILABLE';
 }
 
+export function safetyErrorMessage(code: SafetyErrorCode): string {
+  switch (code) {
+    case 'CONTENT_POLICY_VIOLATION':
+      return SAFETY_ERROR_MESSAGES.CONTENT_POLICY_VIOLATION;
+    case 'SAFETY_CHECK_UNAVAILABLE':
+      return SAFETY_ERROR_MESSAGES.SAFETY_CHECK_UNAVAILABLE;
+  }
+}
+
 export interface MyArchitectAIErrorOptions {
   kind: ErrorKind;
   code?: string | undefined;

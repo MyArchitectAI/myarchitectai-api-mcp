@@ -106,18 +106,21 @@ describe('content safety MCP tool results', () => {
     }
   });
 
-  it('keeps unknown hosted error codes and private details masked', async () => {
-    const client = await connect('remote', () => Response.json({
-      error: 'private upstream detail', code: 'PRIVATE_CODE', balance: 4, cost: 0.5, requestId: 884,
-    }));
-    try {
-      const result = await client.callTool({ name: 'auto_prompt', arguments: { image } });
-      assert.equal(result.isError, true);
-      assert.equal(result.structuredContent, undefined);
-      assert.doesNotMatch(JSON.stringify(result), /private|PRIVATE_CODE|884|balance|cost/);
-      assert.match(JSON.stringify(result.content), /Auto prompt failed \(HTTP 200\)/);
-    } finally {
-      await client.close();
-    }
-  });
+  for (const code of ['PRIVATE_CODE', '__proto__', 'constructor', 'toString']) {
+    it(`keeps unknown hosted error code ${code} and private details masked`, async () => {
+      const client = await connect('remote', () => Response.json({
+        error: 'private upstream detail', code, balance: 4, cost: 0.5, requestId: 884,
+      }));
+      try {
+        const result = await client.callTool({ name: 'auto_prompt', arguments: { image } });
+        assert.equal(result.isError, true);
+        assert.equal(result.structuredContent, undefined);
+        assert.doesNotMatch(JSON.stringify(result), /private|884|balance|cost/);
+        assert.equal(JSON.stringify(result).includes(code), false);
+        assert.match(JSON.stringify(result.content), /Auto prompt failed \(HTTP 200\)/);
+      } finally {
+        await client.close();
+      }
+    });
+  }
 });

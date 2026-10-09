@@ -31,6 +31,46 @@ describe('SessionStore', () => {
     assert.equal(summary.byTool.upscale_4k?.count, 1);
   });
 
+  it('accounts for prototype-like tool names without changing object prototypes', async () => {
+    const before = Object.getOwnPropertyDescriptors(Object.prototype);
+    const store = new SessionStore();
+    const names = ['__proto__', 'constructor', 'toString', 'prototype'];
+    for (const tool of names) {
+      await store.record({ tool, output: ['a'], cost: 0.5, balance: 9.5 });
+      await store.recordFailure(9.25, { tool, code: 'CONTENT_POLICY_VIOLATION', cost: 0.25 });
+    }
+    const summary = store.summary();
+    assert.equal(summary.totalCost, 3);
+    assert.equal(summary.totalGenerations, names.length);
+    assert.equal(summary.failedGenerations, names.length);
+    assert.deepEqual(summary.byTool, Object.fromEntries(names.map((tool) => [tool, { count: 1, cost: 0.75 }])));
+    assert.equal(Object.getPrototypeOf(summary.byTool), Object.prototype);
+    assert.deepEqual(Object.getOwnPropertyDescriptors(Object.prototype), before);
+  });
+
+  it('restores prototype-like retained charges at a custom nested state-file path', async () => {
+    const before = Object.getOwnPropertyDescriptors(Object.prototype);
+    const dir = await mkdtemp(path.join(tmpdir(), 'mai-session-custom-'));
+    const file = path.join(dir, 'user-selected state directory', 'custom billing state.json');
+    const names = ['__proto__', 'constructor', 'toString', 'prototype'];
+    try {
+      const store = new SessionStore(file);
+      await Promise.all(names.flatMap((tool) => [
+        store.record({ tool, output: ['a'], cost: 0.5, balance: 9.5 }),
+        store.recordFailure(9.25, { tool, code: 'CONTENT_POLICY_VIOLATION', cost: 0.25 }),
+      ]));
+      const restored = new SessionStore(file);
+      await restored.init();
+      assert.deepEqual(restored.summary(), store.summary());
+      assert.deepEqual(restored.recent(), store.recent());
+      assert.deepEqual(restored.summary().byTool, Object.fromEntries(names.map((tool) => [tool, { count: 1, cost: 0.75 }])));
+      assert.equal(restored.summary().totalCost, 3);
+      assert.deepEqual(Object.getOwnPropertyDescriptors(Object.prototype), before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('returns recent generations most-recent-first, honoring the limit', async () => {
     const store = new SessionStore();
     for (let i = 1; i <= 5; i++) {
@@ -157,7 +197,7 @@ describe('SessionStore', () => {
   it('loads legacy history arrays and includes new retained charges after another restart', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'mai-session-legacy-'));
     const file = path.join(dir, 'history.json');
-    const legacy = [{ id: 7, tool: 't', createdAt: '2026-10-09T10:00:00Z', output: ['a'], cost: 0.5, balance: 9.5 }];
+    const legacy = [{ id: 7, tool: '__proto__', createdAt: '2026-10-09T10:00:00Z', output: ['a'], cost: 0.5, balance: 9.5 }];
     try {
       await writeFile(file, JSON.stringify(legacy));
       const store = new SessionStore(file);
@@ -165,7 +205,7 @@ describe('SessionStore', () => {
       assert.deepEqual(store.recent(), legacy);
       assert.equal(store.summary().totalCost, 0.5);
       assert.equal(store.summary().failedGenerations, 0);
-      await store.recordFailure(9, { tool: 't', code: 'CONTENT_POLICY_VIOLATION', cost: 0.5 });
+      await store.recordFailure(9, { tool: '__proto__', code: 'CONTENT_POLICY_VIOLATION', cost: 0.5 });
       const restored = new SessionStore(file);
       await restored.init();
       assert.deepEqual(restored.summary(), store.summary());

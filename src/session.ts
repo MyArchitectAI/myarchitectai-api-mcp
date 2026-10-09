@@ -42,7 +42,7 @@ export class SessionStore {
   #records: GenerationRecord[] = [];
   #seq = 0;
   #failedGenerations = 0;
-  #retainedCosts: Record<string, number> = {};
+  #retainedCosts = new Map<string, number>();
   #lastKnownBalance: number | null = null;
   #persistence: Promise<void> = Promise.resolve();
   readonly #stateFile: string | undefined;
@@ -62,7 +62,7 @@ export class SessionStore {
       } else if (isPersistedState(parsed)) {
         this.#records = parsed.records;
         this.#failedGenerations = parsed.failedGenerations;
-        this.#retainedCosts = parsed.retainedCosts;
+        this.#retainedCosts = new Map(Object.entries(parsed.retainedCosts));
         this.#lastKnownBalance = parsed.lastKnownBalance;
       }
       this.#seq = this.#records.reduce((max, record) => Math.max(max, record.id), 0);
@@ -104,7 +104,7 @@ export class SessionStore {
     // without adding it to successful generation counts or recent history.
     if (charge?.code === 'CONTENT_POLICY_VIOLATION' && typeof charge.cost === 'number' &&
       Number.isFinite(charge.cost) && charge.cost > 0) {
-      this.#retainedCosts[charge.tool] = (this.#retainedCosts[charge.tool] ?? 0) + charge.cost;
+      this.#retainedCosts.set(charge.tool, (this.#retainedCosts.get(charge.tool) ?? 0) + charge.cost);
     }
     await this.#persist();
   }
@@ -119,25 +119,27 @@ export class SessionStore {
   }
 
   summary(): UsageSummary {
-    const byTool: Record<string, { count: number; cost: number }> = {};
+    const byTool = new Map<string, { count: number; cost: number }>();
     let totalCost = 0;
     for (const record of this.#records) {
       totalCost += record.cost;
-      const bucket = (byTool[record.tool] ??= { count: 0, cost: 0 });
+      const bucket = byTool.get(record.tool) ?? { count: 0, cost: 0 };
       bucket.count += 1;
       bucket.cost += record.cost;
+      byTool.set(record.tool, bucket);
     }
-    for (const [tool, cost] of Object.entries(this.#retainedCosts)) {
+    for (const [tool, cost] of this.#retainedCosts) {
       totalCost += cost;
-      const bucket = (byTool[tool] ??= { count: 0, cost: 0 });
+      const bucket = byTool.get(tool) ?? { count: 0, cost: 0 };
       bucket.cost += cost;
+      byTool.set(tool, bucket);
     }
     return {
       totalGenerations: this.#records.length,
       failedGenerations: this.#failedGenerations,
       totalCost,
       lastKnownBalance: this.#lastKnownBalance,
-      byTool,
+      byTool: Object.fromEntries(byTool),
       since: this.#records[0]?.createdAt ?? null,
     };
   }
@@ -148,16 +150,17 @@ export class SessionStore {
       version: 1,
       records: this.#records,
       failedGenerations: this.#failedGenerations,
-      retainedCosts: this.#retainedCosts,
+      retainedCosts: Object.fromEntries(this.#retainedCosts),
       lastKnownBalance: this.#lastKnownBalance,
     };
     const snapshot = JSON.stringify(state, null, 2);
-    const file = this.#stateFile;
     // Keep snapshots in mutation order when tool calls finish concurrently.
     this.#persistence = this.#persistence.then(async () => {
+      // The immutable path comes from local startup config, never tool/API input.
+      if (this.#stateFile === undefined) return;
       try {
-        await mkdir(path.dirname(file), { recursive: true });
-        await writeFile(file, snapshot);
+        await mkdir(path.dirname(this.#stateFile), { recursive: true });
+        await writeFile(this.#stateFile, snapshot);
       } catch {
         // Best effort — never fail a generation because history couldn't be written.
       }
