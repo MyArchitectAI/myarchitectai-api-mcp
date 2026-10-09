@@ -53,6 +53,7 @@ const handler = createMcpPortalHandler({
     calls.push({ url: String(url), apiKey });
     if (failure === 'network') throw new Error('synthetic upstream connection lost');
     if (typeof failure === 'number') return Response.json({ error: 'synthetic upstream failure' }, { status: failure });
+    if (failure && typeof failure === 'object') return Response.json(failure.body, { status: failure.status });
     const balance = apiKey === keys[1] ? 10 : 20;
     if (String(url).endsWith('/balance')) return Response.json({ balance, apiKey });
     if (String(url).endsWith('/auto-prompt')) return Response.json({
@@ -154,6 +155,27 @@ try {
     const result = await tool(a, 'render_interior', { image: 'https://cdn.example.test/input.png', outputFormat: 'png' });
     check(`failure ${mode} returned`, result.isError);
     check(`failure ${mode} no paid retry`, calls.length - before, 1);
+  }
+  for (const code of ['CONTENT_POLICY_VIOLATION', 'SAFETY_CHECK_UNAVAILABLE']) {
+    for (const status of [200, 429, 502]) {
+      for (const operation of [
+        { name: 'render_interior', args: { image: 'https://cdn.example.test/input.png', outputFormat: 'png' } },
+        { name: 'auto_prompt', args: { image: 'https://cdn.example.test/input.png' } },
+      ]) {
+        const expected = { error: code === 'CONTENT_POLICY_VIOLATION' ?
+          'Request blocked by content policy' : 'Content safety check unavailable',
+        code, balance: 9.75, cost: code === 'CONTENT_POLICY_VIOLATION' ? 0.25 : 0, requestId: 884 };
+        failure = { status, body: { ...expected, error: 'private provider detail', apiKey: keys[1],
+          provider_job_id: 'private-job-id', output: ['https://cdn.example.test/rejected.png'] } };
+        const before = calls.length;
+        const result = await tool(a, operation.name, operation.args);
+        const label = `${operation.name} ${code} HTTP ${status}`;
+        check(`${label} returned as error`, result.isError);
+        check(`${label} public billing contract`, result.structuredContent, expected);
+        check(`${label} no paid retry`, calls.length - before, 1);
+        check(`${label} private fields omitted`, /private|provider_job_id|rejected\.png/.test(JSON.stringify(result)), false);
+      }
+    }
   }
   failure = undefined;
   const beforeHealth = calls.length;

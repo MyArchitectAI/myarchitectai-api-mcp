@@ -22,6 +22,8 @@ import {
   NetworkError,
   RateLimitError,
   RequestError,
+  isSafetyErrorCode,
+  SAFETY_ERROR_MESSAGES,
   TimeoutError,
   UpstreamError,
 } from './errors.js';
@@ -177,13 +179,20 @@ export class MyArchitectAIClient {
   async #handleResponse<T>(response: Response, url: string, parse: (value: unknown) => T | undefined): Promise<T> {
     const raw = await response.text();
     const parsed = safeJsonParse(raw);
+    const errorBody = asErrorResponse(parsed);
+
+    // Safety failures are terminal even when a gateway reports 429/502.
+    // Use only the stable public message, never a provider's private detail.
+    if (errorBody && isSafetyErrorCode(errorBody.code)) {
+      throw new RequestError(SAFETY_ERROR_MESSAGES[errorBody.code], errorBody.balance, errorBody.cost,
+        errorBody.requestId, response.status, errorBody.code);
+    }
 
     if (response.ok) {
       // Streamed generation failures retain HTTP 200. Inspect errors before
       // parsing success, including balance-only responses.
-      const errorBody = asErrorResponse(parsed);
       if (errorBody) {
-        throw new RequestError(errorBody.error, errorBody.balance, errorBody.cost, errorBody.requestId, response.status);
+        throw new RequestError(errorBody.error, errorBody.balance, errorBody.cost, errorBody.requestId, response.status, errorBody.code);
       }
 
       const result = parse(parsed);
@@ -197,9 +206,8 @@ export class MyArchitectAIClient {
 
     switch (response.status) {
       case 400: {
-        const errorBody = asErrorResponse(parsed);
         if (errorBody) {
-          throw new RequestError(errorBody.error, errorBody.balance, errorBody.cost, errorBody.requestId);
+          throw new RequestError(errorBody.error, errorBody.balance, errorBody.cost, errorBody.requestId, response.status, errorBody.code);
         }
         throw new RequestError(gatewayMessage(parsed) ?? `Bad request: ${truncate(raw)}`);
       }
@@ -292,12 +300,15 @@ function asGenerationResult(value: unknown): GenerationResult | undefined {
 /** Parse streamed or pre-generation error bodies without inventing balances. */
 function asErrorResponse(
   value: unknown,
-): { error: string; balance?: number; cost?: number; requestId?: number } | undefined {
-  if (!isRecord(value) || typeof value.error !== 'string') return undefined;
+): { error: string; code?: string; balance?: number; cost?: number; requestId?: number } | undefined {
+  if (!isRecord(value)) return undefined;
+  const error = isSafetyErrorCode(value.code) ? SAFETY_ERROR_MESSAGES[value.code] : value.error;
+  if (typeof error !== 'string') return undefined;
   return {
-    error: value.error,
-    ...(typeof value.balance === 'number' ? { balance: value.balance } : {}),
-    ...(typeof value.cost === 'number' ? { cost: value.cost } : {}),
+    error,
+    ...(typeof value.code === 'string' ? { code: value.code } : {}),
+    ...(typeof value.balance === 'number' && Number.isFinite(value.balance) ? { balance: value.balance } : {}),
+    ...(typeof value.cost === 'number' && Number.isFinite(value.cost) ? { cost: value.cost } : {}),
     ...(Number.isInteger(value.requestId) ? { requestId: value.requestId as number } : {}),
   };
 }

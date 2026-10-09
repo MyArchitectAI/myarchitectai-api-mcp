@@ -14,7 +14,7 @@ import { apiKeyFingerprint, type Config } from './config.js';
 import type { ApiClient, GenerationResult } from './client.js';
 import { classifyImageInput, describeSource, MediaService, openInBrowser, resolveLocalPath } from './media.js';
 import type { SessionStore } from './session.js';
-import { MyArchitectAIError } from './errors.js';
+import { isSafetyErrorCode, MyArchitectAIError, safetyErrorMessage } from './errors.js';
 import {
   animateShape,
   autoPromptShape,
@@ -124,7 +124,7 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
       title: tool.title,
       description: `${tool.description} Image inputs accept public HTTPS URLs or image data URIs. Charges the API account; cost and balance are in USD.`,
       inputSchema: tool.inputSchema,
-      outputSchema: generationOutputShape,
+      outputSchema: apiOutputSchema(generationOutputShape),
       annotations: GENERATION_ANNOTATIONS,
     }, async (args) => generate(deps, API_TOOL_ENDPOINTS[tool.name], tool.name, tool.title, args));
   }
@@ -133,14 +133,14 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
     title: 'Auto Prompt',
     description: 'Analyze an image and return a descriptive render prompt as plain text, not a URL. Charges the API account; cost and balance are in USD.',
     inputSchema: autoPromptShape,
-    outputSchema: autoPromptOutputShape,
+    outputSchema: apiOutputSchema(autoPromptOutputShape),
     annotations: GENERATION_ANNOTATIONS,
   }, async (args) => {
     let result;
     try {
       result = await deps.client.autoPrompt(args);
     } catch (err) {
-      recordFailure(deps, err);
+      await recordFailure(deps, 'auto_prompt', err);
       return formatError('Auto prompt', err, deps.mode);
     }
     if (deps.mode !== 'remote') {
@@ -157,7 +157,7 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
     description: deps.mode === 'remote'
       ? 'Fetch the current API account balance in USD without spending USD.'
       : 'Fetch the current API account balance in USD without spending USD. Unlike usage_summary, this reads the live balance.',
-    inputSchema: {}, outputSchema: balanceOutputShape,
+    inputSchema: {}, outputSchema: apiOutputSchema(balanceOutputShape),
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   }, async () => {
     try {
@@ -290,7 +290,7 @@ function registerQolTools(server: McpServer, deps: StdioToolDeps): void {
       title: 'Usage Summary',
       description:
         "Report this session's MyArchitectAI usage: number of generations, total USD spent, the last known " +
-        'balance (from the most recent generation — no paid call), and a per-tool breakdown. Does not charge the API account.',
+        'balance (from the most recent generation — no paid call), and a per-tool breakdown. Spend includes retained content policy charges; generation counts include successful outputs only. Does not charge the API account.',
       outputSchema: usageOutputShape,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -370,7 +370,7 @@ async function generate(
   } catch (err) {
     // Count API/validation rejections (not transport errors), preserving any
     // balance the API reported without masking the original API error.
-    recordFailure(deps, err);
+    await recordFailure(deps, toolName, err);
     return formatError(label, err, deps.mode);
   }
   if (deps.mode !== 'remote') {
@@ -386,9 +386,9 @@ async function generate(
   return formatSuccess(label, result, toolName === 'animate' ? 'video' : 'image');
 }
 
-function recordFailure(deps: ToolDeps, err: unknown): void {
+async function recordFailure(deps: ToolDeps, tool: string, err: unknown): Promise<void> {
   if (deps.mode !== 'remote' && err instanceof MyArchitectAIError && err.kind !== 'network' && err.kind !== 'timeout') {
-    deps.session.recordFailure(err.balance);
+    await deps.session.recordFailure(err.balance, { tool, code: err.code, cost: err.cost });
   }
 }
 
@@ -413,23 +413,58 @@ function formatSuccess(label: string, result: GenerationResult, outputType: 'ima
 }
 
 function formatError(label: string, err: unknown, mode: ToolDeps['mode']): CallToolResult {
-  if (mode === 'remote') {
+  const safetyCode = err instanceof MyArchitectAIError && isSafetyErrorCode(err.code) ? err.code : undefined;
+  if (mode === 'remote' && safetyCode === undefined) {
     const status = err instanceof MyArchitectAIError && err.status !== undefined ? ` (HTTP ${err.status})` : '';
     return { content: [{ type: 'text', text: `${label} failed${status}.` }], isError: true };
   }
   if (err instanceof MyArchitectAIError) {
     const meta: string[] = [];
+    if (err.code !== undefined) meta.push(err.code);
     if (err.requestId !== undefined) meta.push(`request ID ${err.requestId}`);
     if (err.status !== undefined) meta.push(`HTTP ${err.status}`);
     if (typeof err.balance === 'number') meta.push(`balance ${formatNumber(err.balance)}`);
     if (typeof err.cost === 'number') meta.push(`cost ${formatNumber(err.cost)}`);
 
     const detail = meta.length > 0 ? `\n\n(${meta.join(' · ')})` : '';
-    return { content: [{ type: 'text', text: `${label} failed: ${err.message}${detail}` }], isError: true };
+    const message = safetyCode === undefined ? err.message : safetyErrorMessage(safetyCode);
+    if (safetyCode === undefined) {
+      return { content: [{ type: 'text', text: `${label} failed: ${message}${detail}` }], isError: true };
+    }
+    return {
+      content: [{ type: 'text', text: `${label} failed: ${message}${detail}` }],
+      structuredContent: {
+        error: message,
+        ...(err.code !== undefined ? { code: err.code } : {}),
+        ...(err.balance !== undefined ? { balance: err.balance } : {}),
+        ...(err.cost !== undefined ? { cost: err.cost } : {}),
+        ...(err.requestId !== undefined ? { requestId: err.requestId } : {}),
+      },
+      isError: true,
+    };
   }
 
   const message = err instanceof Error ? err.message : String(err);
   return { content: [{ type: 'text', text: `${label} failed: ${message}` }], isError: true };
+}
+
+/** SDK clients validate structured errors after discovering output schemas. */
+function apiOutputSchema(shape: z.ZodRawShape): z.ZodObject {
+  const success = z.strictObject(shape);
+  const failure = z.strictObject({
+    error: z.enum(['Request blocked by content policy', 'Content safety check unavailable']),
+    code: z.enum(['CONTENT_POLICY_VIOLATION', 'SAFETY_CHECK_UNAVAILABLE']),
+    balance: z.number().optional(),
+    cost: z.number().optional(),
+    requestId: z.number().int().optional(),
+  });
+  const combined = { ...success.partial().shape, ...failure.partial().shape };
+  // Keep an object at the root for MCP, with two explicit, strict alternatives.
+  return z.strictObject(combined).superRefine((value, context) => {
+    if (!success.safeParse(value).success && !failure.safeParse(value).success) {
+      context.addIssue({ code: 'custom', message: 'Expected a successful API result or public safety error.' });
+    }
+  }).meta({ oneOf: [z.toJSONSchema(success), z.toJSONSchema(failure)] });
 }
 
 function text(message: string): CallToolResult {

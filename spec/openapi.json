@@ -2,7 +2,7 @@
   "openapi": "3.0.1",
   "info": {
     "title": "MyArchitectAI API",
-    "description": "AI rendering API for architecture and interior design. Create photorealistic renderings, transfer styles between images, edit images with natural language, upscale images up to 8K, turn static renders into animations, and more. Rendering images in 13s, editing images in 1-3s, animating renders in 60-90s. Best practices [here](https://www.myarchitectai.com/rendering-tutorials).\n\n## Rate limits\n\nEach API key is limited to **5 requests per second** with a burst allowance of **20 requests**. Requests over the limit are rejected with HTTP `429` and the body `{\"error\":\"Too Many Requests\"}`. Rejected requests are never charged.\n\nBuild a fallback into your integration: on a `429`, retry with exponential backoff and jitter (e.g. wait 1s, then 2s, 4s, up to a few attempts) instead of failing or retrying immediately.\n\n## Error handling\n\n**Check the response body, not just the status code.** Generation endpoints run behind a streamed response so the connection stays open for long jobs, which means the HTTP status is committed before the job finishes. A job that fails *during* generation therefore still returns `200`, with an error body instead of a result.\n\nTreat a `200` as successful only if the body contains an `output` key. If it contains an `error` key the request failed and the charge was refunded \u2014 `cost` is `0` and `balance` reflects the refund. Always include `requestId` when contacting support.\n\nFailures that happen *before* generation starts (authentication, insufficient funds, rate limits) are returned with their real status codes and never reach the streamed path.\n\n## Request size\n\nRequest bodies are capped at **10 MB**. Oversized requests are rejected with HTTP `413` and a **plain-text** body (`HTTP content length exceeded 10485760 bytes.`) \u2014 this one is not JSON and carries neither `error` nor `message`, because it is rejected before the JSON error shape is applied. Base64-encoding inflates an image by roughly 33%, so prefer passing a URL over inline base64 for large sources.",
+    "description": "AI rendering API for architecture and interior design. Create photorealistic renderings, transfer styles between images, edit images with natural language, upscale images up to 8K, turn static renders into animations, and more. Rendering images in 13s, editing images in 1-3s, animating renders in 60-90s. Best practices [here](https://www.myarchitectai.com/rendering-tutorials).\n\n## Rate limits\n\nEach API key is limited to **5 requests per second** with a burst allowance of **20 requests**. Requests over the limit are rejected with HTTP `429` and the body `{\"error\":\"Too Many Requests\"}`. Rejected requests are never charged.\n\nBuild a fallback into your integration: on a `429`, retry with exponential backoff and jitter (e.g. wait 1s, then 2s, 4s, up to a few attempts) instead of failing or retrying immediately.\n\n## Error handling\n\n**Check the response body, not just the status code.** Generation endpoints run behind a streamed response so the connection stays open for long jobs, which means the HTTP status is committed before the job finishes. A job that fails *during* generation therefore still returns `200`, with an error body instead of a result.\n\nTreat a `200` as successful only if the body contains an `output` key. If it contains `error`, inspect the optional `code` and the final `cost` and `balance`. Always include `requestId` when contacting support.\n\n- `CONTENT_POLICY_VIOLATION`: `error` is `Request blocked by content policy`. The charge is retained; no automatic refund is issued. Contact support with `requestId` if you believe the block was a mistake.\n- `SAFETY_CHECK_UNAVAILABLE`: `error` is `Content safety check unavailable`. This failure follows the automatic refund path, as do ordinary generation failures. A completed refund returns `cost: 0` and restores `balance`.\n\nNever automatically retry either safety error or send the same request to another provider. A caller may explicitly retry a safety-check outage later. Safety codes take precedence over generic HTTP retry rules.\n\nFailures that happen *before* generation starts (authentication, insufficient funds, rate limits) are returned with their real status codes and never reach the streamed path.\n\n## Request size\n\nRequest bodies are capped at **10 MB**. Oversized requests are rejected with HTTP `413` and a **plain-text** body (`HTTP content length exceeded 10485760 bytes.`) — this one is not JSON and carries neither `error` nor `message`, because it is rejected before the JSON error shape is applied. Base64-encoding inflates an image by roughly 33%, so prefer passing a URL over inline base64 for large sources.",
     "version": "1.0.0",
     "contact": {
       "name": "MyArchitectAI",
@@ -32,7 +32,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -96,7 +96,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -160,7 +160,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -224,7 +224,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -275,7 +275,7 @@
     "/change-textures": {
       "post": {
         "summary": "Change Textures",
-        "description": "Change the surface textures and materials of the masked area of an image while keeping its geometry and layout. Requires a `mask` marking the surfaces to retexture (white = change, black = keep; URL or base64). Choose exactly one of two modes: pass a `referenceImage` of the desired texture, or describe the texture with a `prompt` \u2014 providing both is rejected. Returns the resulting image URL as the only element of the output array.",
+        "description": "Change the surface textures and materials of the masked area of an image while keeping its geometry and layout. Requires a `mask` marking the surfaces to retexture (white = change, black = keep; URL or base64). Choose exactly one of two modes: pass a `referenceImage` of the desired texture, or describe the texture with a `prompt` — providing both is rejected. Returns the resulting image URL as the only element of the output array.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -288,7 +288,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -339,7 +339,7 @@
     "/set-atmosphere": {
       "post": {
         "summary": "Set Atmosphere",
-        "description": "Change the atmosphere of an image \u2014 relight an interior or change the time of day, season, or weather of an exterior \u2014 while keeping its geometry and materials. Set `sceneType` to choose the mode: `interior` requires a `lighting` value; `exterior` requires at least one of `timeOfDay`, `season`, or `weather` (any combination). Fields from the other mode are rejected. Returns the resulting image URL as the first element of the output array.",
+        "description": "Change the atmosphere of an image — relight an interior or change the time of day, season, or weather of an exterior — while keeping its geometry and materials. Set `sceneType` to choose the mode: `interior` requires a `lighting` value; `exterior` requires at least one of `timeOfDay`, `season`, or `weather` (any combination). Fields from the other mode are rejected. Returns the resulting image URL as the first element of the output array.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -352,7 +352,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -416,7 +416,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -480,7 +480,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -544,7 +544,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -609,7 +609,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -673,7 +673,7 @@
         },
         "responses": {
           "200": {
-            "description": "Request completed \u2014 **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). A failed job is refunded: `cost` is `0` and `balance` reflects the refund.",
+            "description": "Request completed — **inspect the body to determine success**. Contains `output` if the generation succeeded, or `error` if the job failed after the response stream opened (see *Error handling* above). `CONTENT_POLICY_VIOLATION` retains the charge. `SAFETY_CHECK_UNAVAILABLE` and ordinary failures follow the automatic refund path; a completed refund returns `cost: 0`. Never automatically retry either safety code or switch providers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -724,7 +724,7 @@
     "/balance": {
       "post": {
         "summary": "Check Balance",
-        "description": "Return the current account balance for the API key. Use this to check your remaining balance without running \u2014 and paying for \u2014 a generation. Takes no request body.",
+        "description": "Return the current account balance for the API key. Use this to check your remaining balance without running — and paying for — a generation. Takes no request body.",
         "responses": {
           "200": {
             "description": "Current account balance",
@@ -808,12 +808,27 @@
           },
           "cost": {
             "type": "number",
-            "description": "Cost charged for this request (typically 0 on error)"
+            "description": "Final cost charged in USD. Retained for CONTENT_POLICY_VIOLATION; 0 after a completed refund."
           },
           "requestId": {
             "type": "integer",
-            "description": "Unique ID of this request \u2014 include it when contacting support or cross-referencing the request log"
+            "description": "Unique ID of this request — include it when contacting support or cross-referencing the request log"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "CONTENT_POLICY_VIOLATION",
+              "SAFETY_CHECK_UNAVAILABLE"
+            ],
+            "description": "Present for safety failures. CONTENT_POLICY_VIOLATION retains the charge; SAFETY_CHECK_UNAVAILABLE follows the automatic refund path. Neither permits automatic retries or provider fallback. An unavailable safety check may be retried explicitly later."
           }
+        },
+        "example": {
+          "error": "Request blocked by content policy",
+          "code": "CONTENT_POLICY_VIOLATION",
+          "balance": 4.67,
+          "cost": 0.15,
+          "requestId": 12346
         }
       },
       "SingleGenerationResponse": {
@@ -841,7 +856,7 @@
           },
           "requestId": {
             "type": "integer",
-            "description": "Unique ID of this request \u2014 include it when contacting support or cross-referencing the request log"
+            "description": "Unique ID of this request — include it when contacting support or cross-referencing the request log"
           }
         }
       },
@@ -873,7 +888,7 @@
           },
           "requestId": {
             "type": "integer",
-            "description": "Unique ID of this request \u2014 include it when contacting support or cross-referencing the request log"
+            "description": "Unique ID of this request — include it when contacting support or cross-referencing the request log"
           }
         }
       },
@@ -1277,7 +1292,7 @@
           },
           "requestId": {
             "type": "integer",
-            "description": "Unique ID of this request \u2014 include it when contacting support or cross-referencing the request log"
+            "description": "Unique ID of this request — include it when contacting support or cross-referencing the request log"
           }
         }
       },
@@ -1330,7 +1345,7 @@
         }
       },
       "PaymentRequired": {
-        "description": "Insufficient funds \u2014 top up the account balance before retrying. The request is not charged.",
+        "description": "Insufficient funds — top up the account balance before retrying. The request is not charged.",
         "content": {
           "application/json": {
             "schema": {
@@ -1360,7 +1375,7 @@
         }
       },
       "RequestTooLarge": {
-        "description": "Request body exceeds the 10 MB limit. Note this response is **plain text, not JSON** (`content-type: text`) with the body `HTTP content length exceeded 10485760 bytes.` \u2014 it is rejected at the gateway front door before any JSON error shape is applied, so it carries neither `error` nor `message`. Base64-encoding inflates an image by ~33%; pass a URL instead of inline base64 for large sources.",
+        "description": "Request body exceeds the 10 MB limit. Note this response is **plain text, not JSON** (`content-type: text`) with the body `HTTP content length exceeded 10485760 bytes.` — it is rejected at the gateway front door before any JSON error shape is applied, so it carries neither `error` nor `message`. Base64-encoding inflates an image by ~33%; pass a URL instead of inline base64 for large sources.",
         "content": {
           "text/plain": {
             "schema": {
@@ -1370,7 +1385,7 @@
         }
       },
       "RateLimited": {
-        "description": "Rate limit exceeded \u2014 more than 5 requests/second (burst 20) from this API key. Retry with exponential backoff; rejected requests are not charged.",
+        "description": "Rate limit exceeded — more than 5 requests/second (burst 20) from this API key. Retry with exponential backoff; rejected requests are not charged.",
         "content": {
           "application/json": {
             "schema": {

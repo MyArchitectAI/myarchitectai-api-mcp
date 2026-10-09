@@ -1,6 +1,6 @@
 {
   "name": "@myarchitectai/mcp",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Model Context Protocol (MCP) server for the MyArchitectAI API — rendering, editing, textures, atmosphere, animation, prompts, 4K/8K upscaling and balance.",
   "type": "module",
   "license": "MIT",
@@ -52,7 +52,7 @@
     "api:check": "node scripts/api-contract.mjs",
     "api:check:live": "node scripts/api-contract.mjs --live",
     "api:update": "node scripts/api-contract.mjs --update",
-    "smoke:portal": "node --import tsx scripts/smoke-portal.mjs"
+    "smoke:portal": "tsx --tsconfig scripts/tsconfig.portal-smoke.json scripts/smoke-portal.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
