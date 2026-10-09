@@ -16,8 +16,21 @@ export type ErrorKind =
   | 'network'
   | 'timeout';
 
+/** Public safety failures must never trigger an automatic retry or fallback. */
+export const SAFETY_ERROR_MESSAGES = {
+  CONTENT_POLICY_VIOLATION: 'Request blocked by content policy',
+  SAFETY_CHECK_UNAVAILABLE: 'Content safety check unavailable',
+} as const;
+
+export type SafetyErrorCode = keyof typeof SAFETY_ERROR_MESSAGES;
+
+export function isSafetyErrorCode(code: unknown): code is SafetyErrorCode {
+  return code === 'CONTENT_POLICY_VIOLATION' || code === 'SAFETY_CHECK_UNAVAILABLE';
+}
+
 export interface MyArchitectAIErrorOptions {
   kind: ErrorKind;
+  code?: string | undefined;
   status?: number | undefined;
   balance?: number | undefined;
   cost?: number | undefined;
@@ -30,6 +43,7 @@ export interface MyArchitectAIErrorOptions {
 /** Base class for all errors raised by this server. */
 export class MyArchitectAIError extends Error {
   readonly kind: ErrorKind;
+  readonly code: string | undefined;
   readonly status: number | undefined;
   readonly balance: number | undefined;
   readonly cost: number | undefined;
@@ -43,6 +57,7 @@ export class MyArchitectAIError extends Error {
     super(message, options.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = new.target.name;
     this.kind = options.kind;
+    this.code = options.code;
     this.status = options.status;
     this.balance = options.balance;
     this.cost = options.cost;
@@ -71,8 +86,8 @@ export class AuthError extends MyArchitectAIError {
  * The API still reports `balance` and `cost` (cost is typically 0). Not retryable.
  */
 export class RequestError extends MyArchitectAIError {
-  constructor(message: string, balance?: number, cost?: number, requestId?: number, status = 400) {
-    super(message, { kind: 'request', status, retryable: false, balance, cost, requestId });
+  constructor(message: string, balance?: number, cost?: number, requestId?: number, status = 400, code?: string) {
+    super(message, { kind: 'request', status, retryable: false, balance, cost, requestId, code });
   }
 }
 

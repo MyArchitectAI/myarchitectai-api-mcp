@@ -30,11 +30,21 @@ export interface UsageSummary {
   since: string | null;
 }
 
+type PersistedState = {
+  version: 1;
+  records: GenerationRecord[];
+  failedGenerations: number;
+  retainedCosts: Record<string, number>;
+  lastKnownBalance: number | null;
+};
+
 export class SessionStore {
   #records: GenerationRecord[] = [];
   #seq = 0;
   #failedGenerations = 0;
+  #retainedCosts: Record<string, number> = {};
   #lastKnownBalance: number | null = null;
+  #persistence: Promise<void> = Promise.resolve();
   readonly #stateFile: string | undefined;
 
   constructor(stateFile?: string) {
@@ -48,9 +58,14 @@ export class SessionStore {
       const parsed: unknown = JSON.parse(await readFile(this.#stateFile, 'utf8'));
       if (Array.isArray(parsed)) {
         this.#records = parsed.filter(isRecord);
-        this.#seq = this.#records.reduce((max, record) => Math.max(max, record.id), 0);
         this.#lastKnownBalance = this.#records.at(-1)?.balance ?? null;
+      } else if (isPersistedState(parsed)) {
+        this.#records = parsed.records;
+        this.#failedGenerations = parsed.failedGenerations;
+        this.#retainedCosts = parsed.retainedCosts;
+        this.#lastKnownBalance = parsed.lastKnownBalance;
       }
+      this.#seq = this.#records.reduce((max, record) => Math.max(max, record.id), 0);
     } catch {
       // No (or unreadable) prior state — start fresh.
     }
@@ -77,13 +92,21 @@ export class SessionStore {
    * Note a generation that failed at the API/validation level (not a transport
    * error). Increments the failure count and, when the API reported a balance
    * on the error, updates the last-known balance — so usage_summary stays
-   * informative even for a session with no successful generations.
+   * informative even for a session with no successful generations. Retained
+   * policy charges are included in spend without inventing successful results.
    */
-  recordFailure(balance?: number): void {
+  async recordFailure(balance?: number, charge?: { tool: string; code: string | undefined; cost: number | undefined }): Promise<void> {
     this.#failedGenerations += 1;
     if (typeof balance === 'number') {
       this.#lastKnownBalance = balance;
     }
+    // A billed policy rejection has no usable output. Track its retained charge
+    // without adding it to successful generation counts or recent history.
+    if (charge?.code === 'CONTENT_POLICY_VIOLATION' && typeof charge.cost === 'number' &&
+      Number.isFinite(charge.cost) && charge.cost > 0) {
+      this.#retainedCosts[charge.tool] = (this.#retainedCosts[charge.tool] ?? 0) + charge.cost;
+    }
+    await this.#persist();
   }
 
   updateBalance(balance: number): void {
@@ -104,6 +127,11 @@ export class SessionStore {
       bucket.count += 1;
       bucket.cost += record.cost;
     }
+    for (const [tool, cost] of Object.entries(this.#retainedCosts)) {
+      totalCost += cost;
+      const bucket = (byTool[tool] ??= { count: 0, cost: 0 });
+      bucket.cost += cost;
+    }
     return {
       totalGenerations: this.#records.length,
       failedGenerations: this.#failedGenerations,
@@ -116,13 +144,36 @@ export class SessionStore {
 
   async #persist(): Promise<void> {
     if (this.#stateFile === undefined) return;
-    try {
-      await mkdir(path.dirname(this.#stateFile), { recursive: true });
-      await writeFile(this.#stateFile, JSON.stringify(this.#records, null, 2));
-    } catch {
-      // Best effort — never fail a generation because history couldn't be written.
-    }
+    const state: PersistedState = {
+      version: 1,
+      records: this.#records,
+      failedGenerations: this.#failedGenerations,
+      retainedCosts: this.#retainedCosts,
+      lastKnownBalance: this.#lastKnownBalance,
+    };
+    const snapshot = JSON.stringify(state, null, 2);
+    const file = this.#stateFile;
+    // Keep snapshots in mutation order when tool calls finish concurrently.
+    this.#persistence = this.#persistence.then(async () => {
+      try {
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeFile(file, snapshot);
+      } catch {
+        // Best effort — never fail a generation because history couldn't be written.
+      }
+    });
+    await this.#persistence;
   }
+}
+
+function isPersistedState(value: unknown): value is PersistedState {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return v.version === 1 && Array.isArray(v.records) && v.records.every(isRecord) &&
+    typeof v.failedGenerations === 'number' && Number.isInteger(v.failedGenerations) && v.failedGenerations >= 0 &&
+    typeof v.retainedCosts === 'object' && v.retainedCosts !== null && !Array.isArray(v.retainedCosts) &&
+    Object.values(v.retainedCosts).every((cost) => typeof cost === 'number' && Number.isFinite(cost) && cost > 0) &&
+    (v.lastKnownBalance === null || typeof v.lastKnownBalance === 'number' && Number.isFinite(v.lastKnownBalance));
 }
 
 function isRecord(value: unknown): value is GenerationRecord {

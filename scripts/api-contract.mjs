@@ -97,7 +97,20 @@ const checkTools = async (spec) => {
       // Preserve the existing array output contract and pre-requestId fixtures.
       if (name !== 'auto_prompt' && name !== 'balance') normalized.properties.output = { type: 'array' };
       normalized.required = normalized.required.filter((field) => field !== 'requestId');
-      checkFields(normalized, tool.outputSchema, `${name} response`);
+      const branches = tool.outputSchema?.oneOf;
+      assert.ok(Array.isArray(branches) && branches.length === 2, `${name}: expected success and public safety alternatives`);
+      const successOutput = branches.find((branch) => branch.required?.includes(name === 'balance' ? 'balance' : 'output'));
+      const safetyOutput = branches.find((branch) => branch.required?.includes('code'));
+      assert.ok(successOutput, `${name}: missing success output schema`);
+      assert.ok(safetyOutput, `${name}: missing public safety error schema`);
+      checkFields(normalized, successOutput, `${name} response`);
+      checkFields({ type: 'object', properties: {
+        error: { type: 'string', enum: ['Request blocked by content policy', 'Content safety check unavailable'] },
+        code: { type: 'string', enum: ['CONTENT_POLICY_VIOLATION', 'SAFETY_CHECK_UNAVAILABLE'] },
+        balance: { type: 'number' }, cost: { type: 'number' }, requestId: { type: 'integer' },
+      }, required: ['error', 'code'] }, safetyOutput, `${name} safety error`);
+      assert.equal(successOutput.additionalProperties, false, `${name}: success must reject unknown fields`);
+      assert.equal(safetyOutput.additionalProperties, false, `${name}: safety errors must reject private fields`);
       assert.equal(tool.annotations?.readOnlyHint, name === 'balance', `${name}: read-only annotation differs`);
     }
     process.stdout.write(`API_CONTRACT_OK: ${operations.length} operations, ${tools.length} MCP tools\n`);

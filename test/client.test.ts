@@ -190,6 +190,67 @@ describe('MyArchitectAIClient.generate', () => {
 
 
 describe('current API response handling', () => {
+  for (const mode of ['direct', 'hosted'] as const) {
+    for (const operation of ['generate', 'autoPrompt', 'balance'] as const) {
+      for (const code of ['CONTENT_POLICY_VIOLATION', 'SAFETY_CHECK_UNAVAILABLE'] as const) {
+        for (const status of [200, 400, 429, 502]) {
+          it(`${mode} ${operation} preserves ${code} at HTTP ${status} without retrying`, async () => {
+            const body = {
+              error: 'private provider detail', code, balance: 4.97,
+              cost: code === 'CONTENT_POLICY_VIOLATION' ? 0.03 : 0, requestId: 884,
+            };
+            const { fetch, count } = stubFetch(() => jsonResponse(status, body, { 'retry-after': '0' }));
+            const client = mode === 'direct' ? new MyArchitectAIClient(baseConfig, fetch) :
+              new MyArchitectAIClient({ ...baseConfig, transport: () => fetch('https://portal.test') });
+            const request = (): Promise<unknown> => {
+              if (operation === 'autoPrompt') return client.autoPrompt({ image: 'https://x/i.png' });
+              if (operation === 'balance') return client.balance();
+              return client.generate('/render/exterior', {});
+            };
+            await assert.rejects(request, (err: unknown) => {
+              assert.ok(err instanceof RequestError);
+              assert.equal(err.code, code);
+              assert.equal(err.message, code === 'CONTENT_POLICY_VIOLATION' ?
+                'Request blocked by content policy' : 'Content safety check unavailable');
+              assert.equal(err.status, status);
+              assert.equal(err.balance, body.balance);
+              assert.equal(err.cost, body.cost);
+              assert.equal(err.requestId, body.requestId);
+              assert.equal(err.retryable, false);
+              return true;
+            });
+            assert.equal(count(), 1);
+          });
+        }
+      }
+    }
+  }
+
+  it('recognizes a safety code without an upstream error message', async () => {
+    const { fetch, count } = stubFetch(() => jsonResponse(429, { code: 'CONTENT_POLICY_VIOLATION', cost: 0.03 }));
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    await assert.rejects(() => client.generate('/animate', {}), (err: unknown) => {
+      assert.ok(err instanceof RequestError);
+      assert.equal(err.code, 'CONTENT_POLICY_VIOLATION');
+      assert.equal(err.cost, 0.03);
+      assert.equal(err.balance, undefined);
+      assert.equal(err.requestId, undefined);
+      return true;
+    });
+    assert.equal(count(), 1);
+  });
+
+  it('preserves an ordinary API error code without assigning safety semantics', async () => {
+    const { fetch } = stubFetch(() => jsonResponse(200, { error: 'invalid input', code: 'INVALID_INPUT', cost: 0 }));
+    const client = new MyArchitectAIClient(baseConfig, fetch);
+    await assert.rejects(() => client.generate('/render/exterior', {}), (err: unknown) => {
+      assert.ok(err instanceof RequestError);
+      assert.equal(err.code, 'INVALID_INPUT');
+      assert.equal(err.message, 'invalid input');
+      return true;
+    });
+  });
+
   it('keeps the timeout active while a streamed body is pending', async () => {
     let bodyAborted = false;
     const fetch: FetchLike = async (_url, init) => new Response(new ReadableStream({

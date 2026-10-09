@@ -52,7 +52,7 @@
     "api:check": "node scripts/api-contract.mjs",
     "api:check:live": "node scripts/api-contract.mjs --live",
     "api:update": "node scripts/api-contract.mjs --update",
-    "smoke:portal": "node --import tsx scripts/smoke-portal.mjs"
+    "smoke:portal": "tsx --tsconfig scripts/tsconfig.portal-smoke.json scripts/smoke-portal.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
