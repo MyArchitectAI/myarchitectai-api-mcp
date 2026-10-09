@@ -1,5 +1,19 @@
 # @myarchitectai/mcp
 
+## 1.0.0
+
+### Major Changes
+
+- 1d1f758: Remove the generic `mcp` binary alias; use `myarchitectai-mcp` or `npx @myarchitectai/mcp` instead. Add an OAuth-protected stateless Streamable HTTP server exposing the 12 existing API operations.
+
+  The hosted connector delegates account checks and API execution to API Portal, keeping customer API keys and AWS/database credentials in Portal. Hosted paid calls are not retried automatically. The stdio API-key flow is unchanged.
+
+### Patch Changes
+
+- ecc6fc4: Preserve public content safety error codes, stable messages, billing metadata and request IDs in direct and hosted MCP results. Content policy violations and unavailable safety checks never trigger automatic retries, including HTTP 429/502 responses.
+
+  Include retained policy charges in session spend without adding successful generation counts or output history. Persist charges, failure counts and balance alongside successful history, while keeping legacy state files readable.
+
 ## 0.2.0
 
 ### Minor Changes
