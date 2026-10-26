@@ -16,8 +16,9 @@ export const createMcpOAuthAuthenticator = (config: { issuer: string; canonicalR
     const count = request.rawHeaders.filter((key, index) => index % 2 === 0 && key.toLowerCase() === 'authorization').length;
     const header = request.headers.authorization;
     const match = count === 1 && typeof header === 'string' ? /^Bearer ([A-Za-z0-9_.-]+)$/.exec(header) : null;
-    if (!match || match[1]!.length > 4096) {throw new RemoteAuthenticationError();}
-    const { payload, protectedHeader } = await jwtVerify(match[1]!, mcpAccessSigningKey(config.signingSecret), {
+    const token = match?.[1];
+    if (!token || token.length > 4096) {throw new RemoteAuthenticationError();}
+    const { payload, protectedHeader } = await jwtVerify(token, mcpAccessSigningKey(config.signingSecret), {
       algorithms: ['HS256'], typ: 'mcp-access+jwt', issuer: config.issuer, audience: config.canonicalResource,
       requiredClaims: ['sub', 'client_id', 'grant_id', 'scope', 'iat', 'exp', 'jti'], maxTokenAge: 900,
     });
@@ -28,8 +29,9 @@ export const createMcpOAuthAuthenticator = (config: { issuer: string; canonicalR
         typeof payload.client_id !== 'string' || !UUID.test(payload.client_id) ||
         typeof payload.grant_id !== 'string' || !UUID.test(payload.grant_id) ||
         typeof payload.jti !== 'string' || !UUID.test(payload.jti) ||
+        typeof payload.iat !== 'number' || typeof payload.exp !== 'number' ||
         !Number.isInteger(payload.iat) || !Number.isInteger(payload.exp) ||
-        payload.exp! <= payload.iat! || payload.exp! > payload.iat! + 900 || typeof payload.scope !== 'string') {
+        payload.exp <= payload.iat || payload.exp > payload.iat + 900 || typeof payload.scope !== 'string') {
       throw new RemoteAuthenticationError();
     }
     const scopes = payload.scope.split(' ');
