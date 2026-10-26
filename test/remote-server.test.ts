@@ -130,7 +130,7 @@ describe('remote MCP HTTP boundary', () => {
     try {
       const client = await connect(app.endpoint, await app.token('user-a'));
       try {
-        const rejected = await client.callTool({ name: 'balance', arguments: { unexpected: Array(10_001).fill(null) } });
+        const rejected = await client.callTool({ name: 'balance', arguments: { unexpected: Array<null>(10_001).fill(null) } });
         assert.equal(rejected.isError, true);
         assert.match(JSON.stringify(rejected.content), /maximum of 10000 elements/);
         assert.deepEqual(app.upstreamKeys, []);
