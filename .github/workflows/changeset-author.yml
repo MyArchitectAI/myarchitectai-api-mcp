@@ -39,6 +39,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -72,12 +73,13 @@ jobs:
           claude_args: |
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(rm:*),Read,Write,Edit,Glob"
             --max-turns 15
-            --model claude-sonnet-4-6
+            --model claude-opus-5-5
       - name: Commit & push the changeset
         # Push with GITHUB_TOKEN (github-actions[bot]) so the commit does NOT
         # re-trigger this workflow or the reviewer on the bot's own commit.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_HEAD_REF: ${{ github.head_ref }}
         run: |
           if [ -z "$(git status --porcelain .changeset/)" ]; then
             echo "No changeset change to commit."
@@ -88,4 +90,4 @@ jobs:
           git add -A .changeset/
           git commit -m "chore: changeset for #${{ github.event.pull_request.number }}"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
-          git push origin "HEAD:${{ github.head_ref }}"
+          git push origin "HEAD:${PR_HEAD_REF}"
