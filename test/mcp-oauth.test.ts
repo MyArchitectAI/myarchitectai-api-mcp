@@ -39,12 +39,15 @@ describe('MCP resource authorization', () => {
     'duplicated scope': { scope: 'balance:read balance:read' },
     'missing expiry': { exp: undefined },
     'expired token': { iat: 100, exp: 900 },
-    'extended lifetime': { exp: Math.floor(Date.now() / 1000) + 901 },
   })) {
     it(`rejects ${name}`, async () => {
       await assert.rejects(createMcpOAuthAuthenticator(config)(request(await token(claims))));
     });
   }
+  it('rejects extended lifetime', async () => {
+    const iat = Math.floor(Date.now() / 1000);
+    await assert.rejects(createMcpOAuthAuthenticator(config)(request(await token({ iat, exp: iat + 901 }))));
+  });
   it('rejects native signing keys, internal assertions and duplicate bearer headers', async () => {
     const authenticate = createMcpOAuthAuthenticator(config);
     await assert.rejects(authenticate(request(await token({}, 'mcp-access+jwt', Buffer.from(config.signingSecret)))));
