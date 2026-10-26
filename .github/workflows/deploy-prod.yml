@@ -5,6 +5,15 @@ name: deploy-prod
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'server.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'vercel.json'
+      - '.vercelignore'
+      - '.npmrc'
   workflow_dispatch:
 
 concurrency:
