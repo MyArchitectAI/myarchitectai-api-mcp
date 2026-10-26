@@ -5,14 +5,18 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { SignJWT } from 'jose';
+import { randomUUID } from 'node:crypto';
+import { mcpAccessSigningKey, MCP_SCOPES } from '../dist/mcp-oauth.js';
 import { createHostedServer } from '../dist/hosted-config.js';
 import { createPortalHealthProbe } from '../dist/portal-account.js';
 import { createMcpPortalHandler } from '../.portal-smoke/server/services/mcp-bridge/mcp-bridge.service.ts';
 
 const portalBaseUrl = 'https://portal.example.test';
 const canonicalResource = 'https://mcp.example.test/mcp';
-const oauthIssuer = 'https://auth.example.test/auth/v1';
+const oauthIssuer = portalBaseUrl;
+const clientId = randomUUID();
+const grants = new Map();
 const signingSecret = 'synthetic-cross-repo-signing-secret-at-least-32-characters';
 const userA = '00000000-0000-0000-0000-000000000001';
 const userB = '00000000-0000-0000-0000-000000000002';
@@ -33,6 +37,7 @@ const check = (name, actual, expected = true) => {
 const handler = createMcpPortalHandler({
   config: { signingSecret, canonicalResource, portalBaseUrl, oauthIssuer,
     apiHost: 'https://api.example.test/v1' },
+  getOAuthGrant: async (id) => grants.get(id) ?? null,
   getClientIdByUserId: async (id) => id === userA ? 101 : id === userB ? 102 : null,
   getApiKeysByClientIds: async (clientIds) => [1, 2].filter((id) => clientIds.includes(id + 100)).map((id) => ({
     id, client_id: id + 100, aws_key_id: `aws-${id}`, name: `synthetic-key-${id}`,
@@ -99,24 +104,30 @@ const portalFetch = async (url, init) => {
     default: throw new Error('Unexpected Portal operation');
   }
 };
-const { publicKey, privateKey } = await generateKeyPair('ES256');
-const jwk = await exportJWK(publicKey);
 const mcpServer = createHostedServer({
   MCP_BILLING_MODE: 'api-balance', MCP_DEPLOYMENT_REVISION: 'a'.repeat(40),
-  MCP_CANONICAL_RESOURCE: canonicalResource, PORTAL_SUPABASE_URL: 'https://auth.example.test',
+  MCP_CANONICAL_RESOURCE: canonicalResource,
   PORTAL_BASE_URL: portalBaseUrl, MCP_PORTAL_SIGNING_SECRET: signingSecret,
   MCP_ALLOWED_HOSTS: '["127.0.0.1"]',
 }, {
-  portalFetch, jwks: createLocalJWKSet({ keys: [{ ...jwk, alg: 'ES256', use: 'sig' }] }),
+  portalFetch,
   registerWork: (work) => registrations.push(work),
 });
 const endpoint = new URL('/mcp', await listen(mcpServer));
 const incomingTokens = [];
-const connect = async (subject) => {
-  const token = await new SignJWT({ client_id: 'smoke-client' }).setProtectedHeader({ alg: 'ES256' })
+const issue = async (subject, scopes = MCP_SCOPES) => {
+  const grant = { id: randomUUID(), client_id: clientId, user_id: subject, resource: canonicalResource,
+    scopes: [...scopes], expires_at: new Date(Date.now() + 86400000).toISOString(), revoked_at: null };
+  grants.set(grant.id, grant);
+  const token = await new SignJWT({ client_id: clientId, grant_id: grant.id, scope: scopes.join(' ') })
+    .setProtectedHeader({ alg: 'HS256', typ: 'mcp-access+jwt' })
     .setIssuer(oauthIssuer).setAudience(canonicalResource).setSubject(subject)
-    .setExpirationTime('5m').sign(privateKey);
+    .setIssuedAt().setJti(randomUUID()).setExpirationTime('5m').sign(mcpAccessSigningKey(signingSecret));
   incomingTokens.push(token);
+  return { token, grant };
+};
+const connect = async (subject) => {
+  const { token } = await issue(subject);
   const client = new Client({ name: 'portal-bridge-smoke', version: '0.0.0' });
   clients.push(client);
   await client.connect(new StreamableHTTPClientTransport(endpoint, {
@@ -126,6 +137,18 @@ const connect = async (subject) => {
 };
 const tool = (client, name, args = {}) => client.callTool({ name, arguments: args });
 try {
+  const restricted = await issue(userA, ['balance:read']);
+  const request = (token, name) => fetch(endpoint, { method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 77, method: 'tools/call', params: { name, arguments: {} } }) });
+  const beforeScopeDenial = calls.length;
+  const denied = await request(restricted.token, 'render_interior');
+  check('unapproved tool returns403', denied.status, 403);
+  check('step-up challenge preserves approved scope', denied.headers.get('www-authenticate').includes('balance:read render:interior'));
+  check('scope denial never reaches generation', calls.length, beforeScopeDenial);
+  check('approved balance works', (await request(restricted.token, 'balance')).status, 200);
+  restricted.grant.revoked_at = new Date().toISOString();
+  check('revoked grant returns401 immediately', (await request(restricted.token, 'balance')).status, 401);
   const a = await connect(userA);
   const b = await connect(userB);
   check('user A balance', (await tool(a, 'balance')).structuredContent, { balance: 10 });
