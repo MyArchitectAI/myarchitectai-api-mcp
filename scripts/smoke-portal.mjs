@@ -5,11 +5,11 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { SignJWT } from 'jose';
 import { randomUUID } from 'node:crypto';
-import { mcpAccessSigningKey, MCP_SCOPES } from '../dist/mcp-oauth.js';
+import { MCP_SCOPES } from '../dist/mcp-oauth.js';
 import { createHostedServer } from '../dist/hosted-config.js';
 import { createPortalHealthProbe } from '../dist/portal-account.js';
+import { createOAuthService } from '../.portal-smoke/server/services/mcp-oauth/mcp-oauth.service.ts';
 import { createMcpPortalHandler } from '../.portal-smoke/server/services/mcp-bridge/mcp-bridge.service.ts';
 
 const portalBaseUrl = 'https://portal.example.test';
@@ -119,10 +119,13 @@ const issue = async (subject, scopes = MCP_SCOPES) => {
   const grant = { id: randomUUID(), client_id: clientId, user_id: subject, resource: canonicalResource,
     scopes: [...scopes], expires_at: new Date(Date.now() + 86400000).toISOString(), revoked_at: null };
   grants.set(grant.id, grant);
-  const token = await new SignJWT({ client_id: clientId, grant_id: grant.id, scope: scopes.join(' ') })
-    .setProtectedHeader({ alg: 'HS256', typ: 'mcp-access+jwt' })
-    .setIssuer(oauthIssuer).setAudience(canonicalResource).setSubject(subject)
-    .setIssuedAt().setJti(randomUUID()).setExpirationTime('5m').sign(mcpAccessSigningKey(signingSecret));
+  const service = createOAuthService({
+    getClient: async () => ({id: clientId, name: 'Synthetic MCP client', redirect_uris: ['https://client.example.test/callback']}),
+    exchange: async () => grant,
+  }, {issuer: oauthIssuer, resource: canonicalResource, signingSecret});
+  const response = await service.token(new URLSearchParams({client_id: clientId, grant_type: 'authorization_code',
+    redirect_uri: 'https://client.example.test/callback', code: 'c'.repeat(43), code_verifier: 'v'.repeat(43), resource: canonicalResource}));
+  const token = response.access_token;
   incomingTokens.push(token);
   return { token, grant };
 };
