@@ -55,7 +55,7 @@
     "smoke:portal": "tsx --tsconfig scripts/tsconfig.portal-smoke.json scripts/smoke-portal.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@vercel/functions": "2.2.13",
     "jose": "5.10.0",
     "zod": "^4.4.3"

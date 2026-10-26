@@ -125,6 +125,28 @@ const connect = async (endpoint: URL, token: string): Promise<Client> => {
 };
 
 describe('remote MCP HTTP boundary', () => {
+  it('rejects excessive tool argument complexity before dispatch and stays usable', async () => {
+    const app = await fixture({ auth: { canonicalResource: resource, issuer, maxBodyBytes: 1_000_000 } });
+    try {
+      const client = await connect(app.endpoint, await app.token('user-a'));
+      try {
+        const rejected = await client.callTool({ name: 'balance', arguments: { unexpected: Array(10_001).fill(null) } });
+        assert.equal(rejected.isError, true);
+        assert.match(JSON.stringify(rejected.content), /maximum of 10000 elements/);
+        assert.deepEqual(app.upstreamKeys, []);
+
+        const balance = await client.callTool({ name: 'balance', arguments: {} });
+        assert.equal(balance.isError, undefined);
+        assert.deepEqual(balance.structuredContent, { balance: 11 });
+        assert.deepEqual(app.upstreamKeys, ['key-user-a']);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   it('exposes only the API operations and isolates account credentials and balances', async () => {
     const app = await fixture();
     try {
