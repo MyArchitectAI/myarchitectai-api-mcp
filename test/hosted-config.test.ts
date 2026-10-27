@@ -4,10 +4,10 @@ import { parseHostedConfig } from '../src/hosted-config.js';
 import { hostedEnv } from './fixtures/hosted-env.js';
 
 describe('hosted runtime configuration', () => {
-  it('derives the exact portal issuer and JWKS without a history dependency', () => {
+  it('derives the exact portal issuer without a history dependency', () => {
     const config = parseHostedConfig(hostedEnv());
-    assert.equal(config.auth.issuer, 'https://portal-project.supabase.co/auth/v1');
-    assert.equal(config.auth.jwksUrl, 'https://portal-project.supabase.co/auth/v1/.well-known/jwks.json');
+    assert.equal(config.auth.issuer, 'https://portal.example');
+    assert.equal(config.auth.jwksUrl, undefined);
     assert.equal(config.auth.canonicalResource, 'https://mcp.myarchitectai.com/mcp');
     assert.equal(config.auth.deploymentRevision, '0123456789abcdef0123456789abcdef01234567');
     assert.deepEqual(Object.keys(config).sort(), ['auth', 'portal']);
@@ -28,8 +28,8 @@ describe('hosted runtime configuration', () => {
 
   it('rejects unsafe issuer origins, bindings, allowlists and revisions without echoing secrets', () => {
     const invalid: NodeJS.ProcessEnv[] = [
-      { ...hostedEnv(), PORTAL_SUPABASE_URL: 'https://other.example/rest/v1' },
-      { ...hostedEnv(), PORTAL_SUPABASE_URL: 'http://portal-project.supabase.co' },
+      { ...hostedEnv(), PORTAL_BASE_URL: 'https://other.example/rest/v1' },
+      { ...hostedEnv(), PORTAL_BASE_URL: 'http://portal.example' },
       { ...hostedEnv(), MCP_ALLOWED_HOSTS: '["trusted.example","trusted.example"]' },
       { ...hostedEnv(), MCP_DEPLOYMENT_REVISION: 'short' },
       { ...hostedEnv(), PORTAL_BASE_URL: 'https://portal.example/forward' },

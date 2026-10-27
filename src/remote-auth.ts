@@ -6,7 +6,7 @@ import { ConfigError } from './errors.js';
 import { logEvent } from './logger.js';
 import type { ValidatedRemoteHttpConfig } from './remote-config.js';
 
-export type VerifiedIdentity = { issuer: string; subject: string; clientId: string };
+export type VerifiedIdentity = { issuer: string; subject: string; clientId: string; grantId?: string; scopes?: readonly string[] };
 
 export class RemoteAuthenticationError extends Error {
   constructor() {

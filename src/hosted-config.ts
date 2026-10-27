@@ -3,7 +3,7 @@ import type { JWTVerifyGetKey } from 'jose';
 import { ConfigError } from './errors.js';
 import { logEvent } from './logger.js';
 import { instrumentExternalFetch } from './remote-observability.js';
-import { createHostedHealthCheck } from './remote-health.js';
+import { createMcpOAuthAuthenticator, MCP_SCOPES } from './mcp-oauth.js';
 import { createPortalAccountResolver, createPortalHealthProbe, type PortalAccountDependencies,
   type PortalAccountOptions } from './portal-account.js';
 import { validatePortalOptions } from './portal-transport.js';
@@ -46,11 +46,11 @@ const portalOrigin = (raw: string): string => {
   try {
     url = new URL(raw);
   } catch {
-    throw new ConfigError('PORTAL_SUPABASE_URL must be an HTTPS origin');
+    throw new ConfigError('PORTAL_BASE_URL must be an HTTPS origin');
   }
   if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' ||
       url.search || url.hash || url.port) {
-    throw new ConfigError('PORTAL_SUPABASE_URL must be an HTTPS origin');
+    throw new ConfigError('PORTAL_BASE_URL must be an HTTPS origin');
   }
   return url.origin;
 };
@@ -60,13 +60,11 @@ export const parseHostedConfig = (env: NodeJS.ProcessEnv): HostedConfig => {
   if (env.MCP_BILLING_MODE !== 'api-balance') {
     throw new ConfigError('MCP_BILLING_MODE must explicitly be api-balance');
   }
-  const supabaseUrl = portalOrigin(required(env.PORTAL_SUPABASE_URL, 'PORTAL_SUPABASE_URL'));
-  const issuer = `${supabaseUrl}/auth/v1`;
+  const issuer = portalOrigin(required(env.PORTAL_BASE_URL, 'PORTAL_BASE_URL'));
   const revision = required(env.MCP_DEPLOYMENT_REVISION, 'MCP_DEPLOYMENT_REVISION');
   const auth: RemoteHttpConfig = {
     canonicalResource: env.MCP_CANONICAL_RESOURCE ?? DEFAULT_RESOURCE,
     issuer,
-    jwksUrl: `${issuer}/.well-known/jwks.json`,
     allowedHosts: jsonArray(env.MCP_ALLOWED_HOSTS, 'MCP_ALLOWED_HOSTS'),
     allowedOrigins: jsonArray(env.MCP_ALLOWED_ORIGINS, 'MCP_ALLOWED_ORIGINS'),
     ...(env.OBS_HEALTH_TOKEN === undefined ? {} : { healthToken: env.OBS_HEALTH_TOKEN }),
@@ -95,17 +93,15 @@ export const createHostedServer = (env: NodeJS.ProcessEnv, dependencies: HostedS
   const portalFetch = instrumentExternalFetch(dependencies.portalFetch ?? fetch,
     { vendor: 'api_portal', operation: 'mcp_bridge', timeoutMs: 120_000, maxAttempts: 1 });
   const resolveAccount = createPortalAccountResolver(config.portal, { ...dependencies, portalFetch });
-  const checkHealth = dependencies.checkHealth ?? createHostedHealthCheck({
-    checkAccount: createPortalHealthProbe(config.portal, { ...dependencies, portalFetch }),
-    jwksUrl: config.auth.jwksUrl as string,
-    fetch: instrumentExternalFetch(fetch,
-      { vendor: 'supabase_jwks', operation: 'jwks_probe', timeoutMs: 5_000, maxAttempts: 1 }),
-    onError: ({ fingerprint, check }) => {
-      logEvent({ event: 'remote_health_error', outcome: 'error', fingerprint, check });
-    },
+  const checkAccount = createPortalHealthProbe(config.portal, { ...dependencies, portalFetch });
+  const checkHealth: NonNullable<RemoteServerOptions['checkHealth']> = dependencies.checkHealth ?? (async (signal) => {
+    const account = await checkAccount(signal ?? AbortSignal.timeout(5_000));
+    return { status: account ? 'ok' : 'unavailable', checks: { account } };
   });
   const handler = createRemoteHandler({
     auth: { ...config.auth, ...(dependencies.jwks ? { jwks: dependencies.jwks } : {}) },
+    authenticate: createMcpOAuthAuthenticator(config.portal),
+    scopesSupported: MCP_SCOPES,
     resolveAccount,
     checkHealth,
     onError: ({ fingerprint, requestId, route, status }) => {
