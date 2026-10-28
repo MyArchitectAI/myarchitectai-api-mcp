@@ -7,7 +7,7 @@ Versioning and the changelog are managed with [Changesets](https://github.com/ch
 Every user-facing PR needs a **changeset**: a small note describing the change and its semver impact (`patch` / `minor` / `major`).
 
 - On **same-repo PRs**, the **Changeset** workflow reads the diff and creates or updates `.changeset/pr-<number>.md` for user-facing changes. See [Claude automation](CLAUDE-AUTOMATION.md).
-- On **fork PRs**, or to write a note manually, run `npm run changeset` and commit the generated file.
+- Same-repository maintainers should edit `.changeset/pr-<number>.md` directly when a manual correction is needed; do not add a second CLI-generated note for the same change. On **fork PRs**, run `npm run changeset` and commit the generated file.
 
 Internal-only PRs (tests, CI, refactors, repo docs) don't need a changeset.
 

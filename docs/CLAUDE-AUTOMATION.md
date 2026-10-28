@@ -6,7 +6,9 @@ PR reviews and automatic changeset authoring use the **Claude Review** and **Cha
 
 The production ruleset requires `lint`, `build` and `test`. The token-based `review`, managed **Claude Code Review** and `changeset` checks are not required. Credential failures, allowance failures and workflow-validation skips are not successful model execution.
 
-Inspect each workflow's `state` in GitHub Actions to verify it is active. The changeset author handles same-repository PRs automatically. Fork contributors, or maintainers preparing notes manually, use `npm run changeset`; see [Releasing](RELEASING.md).
+Inspect each workflow's `state` in GitHub Actions to verify it is active. The changeset author handles same-repository PRs automatically; maintainers correct its `.changeset/pr-<number>.md` file directly rather than adding a second note. Fork contributors use `npm run changeset`; see [Releasing](RELEASING.md).
+
+Justin approved re-enabling Changeset on 28 October 2026 after the replacement Actions token completed a [real review run](https://github.com/MyArchitectAI/myarchitectai-api-mcp/actions/runs/40685795739/attempts/2). The workflow was enabled in repository settings, and the catch-up runs for [the deployment PR](https://github.com/MyArchitectAI/myarchitectai-api-mcp/actions/runs/40329871567/attempts/3) and [the API usage PR](https://github.com/MyArchitectAI/myarchitectai-api-mcp/actions/runs/40675281897/attempts/2) both checked out their current heads and executed Claude successfully. The first needed no note; the second already had an accurate patch note. Neither run added duplicate notes or published a package.
 
 ## Token-based reviews
 
@@ -32,8 +34,8 @@ To stop duplicate managed-review requests, the Claude organisation owner can tur
 
 ## Changeset authoring and catch-up
 
-The changeset workflow has a same-repository guard, explicit Dependabot allowance and credential preflight. It uses `pull_request`, never `pull_request_target` to expose credentials to PR code. Its commit step pushes with `GITHUB_TOKEN` to avoid recursive workflow runs.
+The changeset workflow has a same-repository guard, explicit Dependabot allowance and credential preflight. It uses `pull_request`, never `pull_request_target` to expose credentials to PR code. Runs are serialized per PR, retaining the latest pending event without cancelling an in-progress push and CI dispatch. Its commit step pushes with `GITHUB_TOKEN`, then explicitly dispatches the existing `ci.yml` workflow for the updated branch so required checks run on the generated commit without starting another Claude job. No-change runs do not dispatch CI, and a failed push or dispatch fails the job.
 
 The workflow runs when a PR is opened, synchronized or reopened. After a pause or credential outage, review the open PRs and the merged changes since the latest release. Reuse accurate `.changeset/pr-<number>.md` notes and changes already covered by `CHANGELOG.md`; internal-only PRs need no note. Catch-up should not duplicate existing release entries or publish a package.
 
-For a rerun, confirm the checkout and PR diff reflect the current branch, then inspect the log for actual Claude execution and the appropriate changeset or no-change decision. A rerun that skips trusted-workflow validation is not a completed catch-up. Re-enabling a workflow does not make its check required.
+If a PR has no previous run, trigger a new eligible event by pushing its next change or reopening it. If an old run fails trusted-workflow validation, first ensure the PR's workflow matches the default branch, then use a new eligible event. For any rerun, confirm the checkout and PR diff reflect the current branch, then inspect the log for actual Claude execution and the appropriate changeset or no-change decision. A validation skip is not a completed catch-up. Re-enabling a workflow does not make its check required.
