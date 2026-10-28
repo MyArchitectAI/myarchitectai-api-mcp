@@ -144,6 +144,7 @@ export class MyArchitectAIClient {
         method: 'POST',
         headers: {
           'x-api-key': this.#config.apiKey,
+          'x-myarchitectai-source': 'mcp',
           'content-type': 'application/json',
           accept: 'application/json',
           'user-agent': `${SERVER_NAME}/${SERVER_VERSION}`,
