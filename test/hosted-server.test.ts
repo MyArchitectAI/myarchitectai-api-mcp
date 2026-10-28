@@ -3,26 +3,25 @@ import { once } from 'node:events';
 import { describe, it } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { SignJWT } from 'jose';
+import { randomUUID } from 'node:crypto';
+import { mcpAccessSigningKey, MCP_SCOPES } from '../src/mcp-oauth.js';
 import { createHostedServer } from '../src/hosted-config.js';
 import { hostedEnv } from './fixtures/hosted-env.js';
 
 const subject = '00000000-0000-0000-0000-000000000001';
-const issuer = 'https://portal-project.supabase.co/auth/v1';
+const issuer = 'https://portal.example';
 const resource = 'https://mcp.myarchitectai.com/mcp';
 
 describe('hosted Node server assembly', () => {
   it('passes public safety errors through the authenticated Portal bridge once per tool call', async () => {
-    const { privateKey, publicKey } = await generateKeyPair('ES256');
-    const jwk = await exportJWK(publicKey);
-    const jwks = createLocalJWKSet({ keys: [{ ...jwk, alg: 'ES256', use: 'sig' }] });
     const registrations: Promise<void>[] = [];
     let executions = 0;
     let status = 200;
     let code = 'CONTENT_POLICY_VIOLATION';
     let expectedPath = '/render/exterior';
     const server = createHostedServer(hostedEnv(), {
-      registerWork: (work) => { registrations.push(work); }, jwks,
+      registerWork: (work) => { registrations.push(work); },
       portalFetch: async (input, init) => {
         const url = new URL(String(input));
         if (url.pathname.endsWith('/account')) return Response.json({ authorized: true });
@@ -42,9 +41,9 @@ describe('hosted Node server assembly', () => {
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     const endpoint = new URL(`http://127.0.0.1:${address.port}/mcp`);
-    const token = await new SignJWT({ client_id: 'trusted-client' })
-      .setProtectedHeader({ alg: 'ES256' }).setIssuer(issuer).setAudience(resource)
-      .setSubject(subject).setExpirationTime('5m').sign(privateKey);
+    const token = await new SignJWT({ client_id: randomUUID(), grant_id: randomUUID(), scope: MCP_SCOPES.join(' ') })
+      .setProtectedHeader({ alg: 'HS256', typ: 'mcp-access+jwt' }).setIssuedAt().setJti(randomUUID()).setIssuer(issuer).setAudience(resource)
+      .setSubject(subject).setExpirationTime('5m').sign(mcpAccessSigningKey(hostedEnv().MCP_PORTAL_SIGNING_SECRET!));
     const client = new Client({ name: 'synthetic-hosted-safety-test', version: '0.0.0' });
     try {
       await client.connect(new StreamableHTTPClientTransport(endpoint, {
@@ -80,9 +79,6 @@ describe('hosted Node server assembly', () => {
   });
 
   it('registers the full MCP request lifetime and keeps API keys inside Portal', async () => {
-    const { privateKey, publicKey } = await generateKeyPair('ES256');
-    const jwk = await exportJWK(publicKey);
-    const jwks = createLocalJWKSet({ keys: [{ ...jwk, alg: 'ES256', use: 'sig' }] });
     const registrations: Promise<void>[] = [];
     let portalReads = 0;
     let executions = 0;
@@ -103,7 +99,7 @@ describe('hosted Node server assembly', () => {
       return Response.json({ balance: 17 });
     };
     const server = createHostedServer({ ...hostedEnv(), MYARCHITECTAI_API_KEY: 'wrong-shared-guest-key' }, {
-      registerWork: (work) => { registrations.push(work); }, jwks,
+      registerWork: (work) => { registrations.push(work); },
       portalFetch,
     });
     server.listen(0, '127.0.0.1');
@@ -117,9 +113,9 @@ describe('hosted Node server assembly', () => {
         revision: '0123456789abcdef0123456789abcdef01234567' });
       assert.equal((await fetch(new URL('/health/deep', endpoint))).status, 404);
       assert.equal((await fetch(endpoint, { method: 'POST', body: '{}' })).status, 401);
-      const token = await new SignJWT({ client_id: 'trusted-client' })
-        .setProtectedHeader({ alg: 'ES256' }).setIssuer(issuer).setAudience(resource)
-        .setSubject(subject).setExpirationTime('5m').sign(privateKey);
+      const token = await new SignJWT({ client_id: randomUUID(), grant_id: randomUUID(), scope: MCP_SCOPES.join(' ') })
+        .setProtectedHeader({ alg: 'HS256', typ: 'mcp-access+jwt' }).setIssuedAt().setJti(randomUUID()).setIssuer(issuer).setAudience(resource)
+        .setSubject(subject).setExpirationTime('5m').sign(mcpAccessSigningKey(hostedEnv().MCP_PORTAL_SIGNING_SECRET!));
       const client = new Client({ name: 'synthetic-hosted-test', version: '0.0.0' });
       const transport = new StreamableHTTPClientTransport(endpoint, {
         requestInit: { headers: { authorization: `Bearer ${token}` } },

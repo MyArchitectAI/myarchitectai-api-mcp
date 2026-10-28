@@ -1,6 +1,7 @@
 import { MyArchitectAIClient } from './client.js';
 import { createPortalRequest, type PortalDependencies, type PortalOptions } from './portal-transport.js';
 import type { ResolveAccount } from './remote.js';
+import { RemoteAuthenticationError } from './remote-auth.js';
 
 export type PortalAccountOptions = PortalOptions;
 export type PortalAccountDependencies = PortalDependencies;
@@ -14,6 +15,7 @@ export const createPortalAccountResolver = (
   return async (identity, { signal }) => {
     if (identity.issuer !== options.issuer || signal.aborted) { return undefined; }
     const response = await request('account', {}, identity, signal);
+    if (response.status === 401) { throw new RemoteAuthenticationError(); }
     if (response.status === 403) { return undefined; }
     if (!response.ok) { throw new Error('Portal account lookup unavailable'); }
     const body: unknown = await response.json();

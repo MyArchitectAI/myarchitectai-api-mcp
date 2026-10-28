@@ -13,7 +13,8 @@ permissions:
 # Three readable checks: `lint`, `build`, `test`. `build` and `test` each
 # exercise Node 18/20/22/24 within a single job, so each stays one status check.
 # Dependencies are pure JS (no native addons), so a single `npm ci` is reused
-# across versions — only the runtime is switched between runs.
+# across versions — only the runtime is switched between runs. Install on Node 24
+# because development tooling (including Changesets 3) requires a modern Node/npm.
 
 jobs:
   lint:
@@ -33,9 +34,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 18.x
+          node-version: 24.x
           cache: npm
       - run: npm ci
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18.x
       - name: build + typecheck (Node 18.x)
         run: npm run build && npm run typecheck
       - uses: actions/setup-node@v4
@@ -60,9 +64,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 18.x
+          node-version: 24.x
           cache: npm
       - run: npm ci
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18.x
       - name: test (Node 18.x)
         run: npm test
       - uses: actions/setup-node@v4

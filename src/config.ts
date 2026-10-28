@@ -8,6 +8,11 @@ import { ConfigError } from './errors.js';
 
 export const SERVER_NAME = 'myarchitectai-mcp';
 
+// Fits a base64-encoded 50 MB preview plus its JSON envelope, while bounding stdin.
+export const MAX_STDIO_MESSAGE_BYTES = 64 * 1024 * 1024;
+// Tools accept small, flat argument objects; bound validation of unexpected input.
+export const MAX_TOOL_INPUT_ELEMENTS = 10_000;
+
 /**
  * Server version, read from package.json at runtime so it can't drift from the
  * published package. package.json is always present in the npm tarball and sits
