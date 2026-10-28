@@ -1,12 +1,12 @@
 # Claude automation
 
-PR reviews use the **Claude Review** GitHub Action with Claude Opus 5.5 and the repository's `CLAUDE_CODE_OAUTH_TOKEN`. This restores the review job used before the managed-service migration. Automatic changeset authoring remains paused: the **Changeset** workflow is disabled in repository Actions settings, with its configuration retained for a later approved restart.
+PR reviews and automatic changeset authoring use the **Claude Review** and **Changeset** GitHub Actions with Claude Opus 5.5 and the repository's `CLAUDE_CODE_OAUTH_TOKEN`. Both workflows are enabled; Dependabot-triggered runs use the separate same-named Dependabot secret.
 
 ## Required checks and workflow state
 
-The production ruleset requires `lint`, `build` and `test`. The token-based `review`, managed **Claude Code Review** and `changeset` checks are not required. Credential or allowance failures are not successful reviews; they remain nonblocking while the token is replaced.
+The production ruleset requires `lint`, `build` and `test`. The token-based `review`, managed **Claude Code Review** and `changeset` checks are not required. Credential failures, allowance failures and workflow-validation skips are not successful model execution.
 
-Enable the **Claude Review** Action after restoring its workflow on the default branch. Keep the **Changeset** Action disabled for the repository, including existing branches. Inspect each workflow's `state` in GitHub Actions to verify these settings. Contributors write changesets for user-facing changes with `npm run changeset`; see [Releasing](RELEASING.md).
+Inspect each workflow's `state` in GitHub Actions to verify it is active. The changeset author handles same-repository PRs automatically. Fork contributors, or maintainers preparing notes manually, use `npm run changeset`; see [Releasing](RELEASING.md).
 
 ## Token-based reviews
 
@@ -30,8 +30,10 @@ The managed Code Review service uses the Claude organisation's review billing or
 
 To stop duplicate managed-review requests, the Claude organisation owner can turn off Code review for this repository in [Admin settings > Claude Code](https://claude.ai/admin-settings/claude-code). Keep the GitHub App installed: the restored Action also uses it for GitHub access. This repository change does not alter the organisation's managed-service settings. See [turn off managed reviews for a repository](https://code.claude.com/docs/en/code-review-setup#turn-off-code-review-or-remove-a-repository).
 
-## Changeset restart
+## Changeset authoring and catch-up
 
-The paused changeset workflow retains its same-repository guard, explicit Dependabot allowance, credential preflight, permissions, prompt and model. It uses `pull_request`, never `pull_request_target` to expose credentials to PR code. Its commit step pushes with `GITHUB_TOKEN` to avoid recursive workflow runs.
+The changeset workflow has a same-repository guard, explicit Dependabot allowance and credential preflight. It uses `pull_request`, never `pull_request_target` to expose credentials to PR code. Its commit step pushes with `GITHUB_TOKEN` to avoid recursive workflow runs.
 
-Leave the Changeset workflow disabled until Justin approves re-enabling it. Before restarting, verify both secret stores and available allowance. After approval, enable it in repository Actions settings and inspect new genuine Dependabot and ordinary human PR runs. Confirm Claude executes and makes the appropriate changeset or no-change decision; exclude validation skips and quota failures from success claims. Re-enabling a workflow does not make its check required.
+The workflow runs when a PR is opened, synchronized or reopened. After a pause or credential outage, review the open PRs and the merged changes since the latest release. Reuse accurate `.changeset/pr-<number>.md` notes and changes already covered by `CHANGELOG.md`; internal-only PRs need no note. Catch-up should not duplicate existing release entries or publish a package.
+
+For a rerun, confirm the checkout and PR diff reflect the current branch, then inspect the log for actual Claude execution and the appropriate changeset or no-change decision. A rerun that skips trusted-workflow validation is not a completed catch-up. Re-enabling a workflow does not make its check required.
