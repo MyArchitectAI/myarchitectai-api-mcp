@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { JWTVerifyGetKey } from 'jose';
 import { MyArchitectAIClient, type ApiClient } from './client.js';
-import { SERVER_NAME, SERVER_VERSION, type Config } from './config.js';
+import { MAX_TOOL_INPUT_ELEMENTS, SERVER_NAME, SERVER_VERSION, type Config } from './config.js';
 import { ConfigError } from './errors.js';
 import { logEvent } from './logger.js';
 import { createRemoteAuthenticator, RemoteAuthenticationError, RemoteAuthenticationUnavailableError,
@@ -369,8 +369,10 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           sendJson(response, 403, { error: 'Account not linked' });
           return;
         }
-        const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-        // The 1.29 SDK types conflict with exactOptionalPropertyTypes; omitting
+        const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, {
+          maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS,
+        });
+        // The SDK types conflict with exactOptionalPropertyTypes; omitting
         // sessionIdGenerator is its documented stateless runtime mode.
         const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
         try {
