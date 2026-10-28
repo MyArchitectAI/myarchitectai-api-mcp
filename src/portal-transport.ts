@@ -36,9 +36,11 @@ export const createPortalRequest = (options: PortalOptions, dependencies: Portal
   const origin = new URL(options.baseUrl).origin;
   const signingKey = new TextEncoder().encode(options.signingSecret);
   return async (operation, body, identity, callerSignal) => {
+    const scopes = identity?.scopes ?? [];
     if (operation !== 'health' && (!identity || identity.issuer !== options.issuer ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(identity.subject) ||
-        !identity.clientId.trim() || identity.clientId !== identity.clientId.trim())) {
+        !identity.clientId.trim() || identity.clientId !== identity.clientId.trim() ||
+        !identity.grantId || !scopes.length)) {
       throw new Error('Invalid Portal delegation identity');
     }
     if (operation === 'health' && identity) {
@@ -50,7 +52,8 @@ export const createPortalRequest = (options: PortalOptions, dependencies: Portal
     const issuedAt = Math.floor((dependencies.now ?? Date.now)() / 1000);
     const assertion = await new SignJWT({
       request_hash: createHash('sha256').update(`POST\n${pathname}\n${rawBody}`).digest('hex'),
-      ...(identity ? { oauth_issuer: identity.issuer, client_id: identity.clientId } : {}),
+      ...(identity ? { oauth_issuer: identity.issuer, client_id: identity.clientId,
+        grant_id: identity.grantId, scope: scopes.join(' ') } : {}),
     }).setProtectedHeader({ alg: 'HS256', typ: 'mcp-portal+jwt' })
       .setIssuer(options.canonicalResource).setAudience(`${origin}/api/mcp`)
       .setSubject(identity?.subject ?? 'mcp-service').setIssuedAt(issuedAt)
