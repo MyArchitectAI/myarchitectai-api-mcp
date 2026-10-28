@@ -110,6 +110,8 @@ docker run -i -e MYARCHITECTAI_API_KEY=your-api-key myarchitectai-mcp
 | `MYARCHITECTAI_MAX_PREVIEW_BYTES` | no | `5000000` | Max bytes `preview_image` embeds inline before falling back to a URL. |
 | `MYARCHITECTAI_STATE_FILE` | no | — | Optional path to persist generation history across restarts. |
 
+Stdio requests have a 64 MiB buffer limit, enough for the base64 representation of the largest supported inline preview (50,000,000 image bytes). For larger source images, `preview_image` and `save_image` accept a local file path or HTTPS URL. Clients requesting large inline previews must also allow the corresponding response size; otherwise keep `MYARCHITECTAI_MAX_PREVIEW_BYTES` within the client's response limit. Tool arguments are limited to 10,000 object members and array elements before schema validation. Hosted requests retain their separate 1,000,000-byte default body limit.
+
 ## Behavior
 
 - **Success** → a text summary listing the generated image URL(s), cost, and balance, plus
@@ -142,6 +144,8 @@ The repository also prepares an OAuth-protected stateless Streamable HTTP connec
 
 Contributions are welcome — please open an issue or PR. The published npm package is built from this
 repository.
+
+Use Node 24 and npm 10.9 or newer for development and release tooling. The published server continues to support Node 18.14.1 or newer; CI installs development dependencies on Node 24, then builds and tests the runtime on Node 18, 20, 22 and 24.
 
 ```bash
 git clone https://github.com/MyArchitectAI/myarchitectai-api-mcp.git

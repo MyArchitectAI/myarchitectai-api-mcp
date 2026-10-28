@@ -10,7 +10,7 @@ const options: PortalOptions = {
   baseUrl: 'https://portal.example', issuer: 'https://portal-project.supabase.co/auth/v1',
   canonicalResource: 'https://mcp.myarchitectai.com/mcp', signingSecret: 'synthetic-signing-secret-32-characters-long',
 };
-const identity = { issuer: options.issuer, subject, clientId: 'approved-client' };
+const identity = { issuer: options.issuer, subject, clientId: 'approved-client', grantId: '00000000-0000-0000-0000-000000000002', scopes: ['balance:read'] };
 const context = () => ({ signal: new AbortController().signal });
 
 const verify = async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {

@@ -10,7 +10,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { MyArchitectAIClient } from './client.js';
-import { loadConfig, SERVER_NAME, SERVER_VERSION } from './config.js';
+import { loadConfig, MAX_STDIO_MESSAGE_BYTES, MAX_TOOL_INPUT_ELEMENTS, SERVER_NAME, SERVER_VERSION } from './config.js';
 import { ConfigError } from './errors.js';
 import { MediaService } from './media.js';
 import { SessionStore } from './session.js';
@@ -28,10 +28,14 @@ async function main(): Promise<void> {
   const session = new SessionStore(config.stateFile);
   await session.init();
 
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, {
+    maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS,
+  });
   const tools = registerTools(server, { client, session, media, config });
 
-  const transport = new StdioServerTransport();
+  const transport = new StdioServerTransport(process.stdin, process.stdout, {
+    maxBufferSize: MAX_STDIO_MESSAGE_BYTES,
+  });
   await server.connect(transport);
   log(`v${SERVER_VERSION} ready on stdio — ${tools.length} tools: ${tools.join(', ')}`);
 

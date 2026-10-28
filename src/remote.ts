@@ -4,13 +4,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { JWTVerifyGetKey } from 'jose';
 import { MyArchitectAIClient, type ApiClient } from './client.js';
-import { SERVER_NAME, SERVER_VERSION, type Config } from './config.js';
+import { MAX_TOOL_INPUT_ELEMENTS, SERVER_NAME, SERVER_VERSION, type Config } from './config.js';
 import { ConfigError } from './errors.js';
 import { logEvent } from './logger.js';
-import { createRemoteAuthenticator, RemoteAuthenticationUnavailableError,
+import { createRemoteAuthenticator, RemoteAuthenticationError, RemoteAuthenticationUnavailableError,
   type VerifiedIdentity } from './remote-auth.js';
 import { validateRemoteHttpConfig, type RemoteHttpConfig } from './remote-config.js';
 import { registerTools } from './tools.js';
+import { requiredToolScope } from './mcp-oauth.js';
 
 /** Hosted accounts use a Portal client without possessing database or API credentials. */
 export type RemoteAccount = Config | { client: ApiClient };
@@ -28,12 +29,14 @@ export type RemoteErrorEvent = {
 
 export type RemoteServerOptions = {
   auth: RemoteHttpConfig & { jwks?: JWTVerifyGetKey };
+  authenticate?: (request: IncomingMessage) => Promise<VerifiedIdentity>;
+  scopesSupported?: readonly string[];
   resolveAccount: ResolveAccount;
   createClient?: (config: Config) => MyArchitectAIClient;
   onError?: (event: RemoteErrorEvent) => void;
   checkHealth?: (signal?: AbortSignal) => Promise<{
     status: 'ok' | 'unavailable';
-    checks: { account: boolean; jwks: boolean };
+    checks: Readonly<Record<string, boolean>>;
   }>;
 };
 
@@ -159,7 +162,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
     throw new ConfigError('resolveAccount is required for remote MCP');
   }
   const config = validateRemoteHttpConfig(options.auth);
-  const authenticate = createRemoteAuthenticator(config, options.auth.jwks);
+  const authenticate = options.authenticate ?? createRemoteAuthenticator(config, options.auth.jwks);
   const createClient = options.createClient ?? ((account: Config) => new MyArchitectAIClient(account));
   let activeRequests = 0;
   const capture = (event: RemoteErrorEvent): void => {
@@ -256,7 +259,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
         sendJson(response, 200, {
           resource: config.canonicalResource,
           authorization_servers: [config.issuer],
-          scopes_supported: ['openid'],
+          scopes_supported: options.scopesSupported ?? ['openid'],
         });
         return;
       }
@@ -308,7 +311,7 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
             sendJson(response, 503, { error: 'Authentication unavailable' });
             return;
           }
-          response.setHeader('www-authenticate', `Bearer resource_metadata="${config.metadataUrl}", scope="openid"`);
+          response.setHeader('www-authenticate', `Bearer resource_metadata="${config.metadataUrl}"${options.scopesSupported ? '' : ', scope="openid"'}`);
           sendJson(response, 401, { error: 'Unauthorized' });
           return;
         }
@@ -335,12 +338,24 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           return;
         }
         let account: RemoteAccount | undefined;
+        const requiredScope = requiredToolScope(body);
+        if (identity.scopes && requiredScope && !identity.scopes.includes(requiredScope)) {
+          const scopes = [...new Set([...identity.scopes, requiredScope])].join(' ');
+          response.setHeader('www-authenticate', `Bearer resource_metadata="${config.metadataUrl}", error="insufficient_scope", scope="${scopes}"`);
+          sendJson(response, 403, { error: 'insufficient_scope' });
+          return;
+        }
         try {
           account = await awaitUntilAbort(Promise.resolve(options.resolveAccount(identity, {
             signal: abortController.signal,
           })), abortController.signal);
-        } catch {
+        } catch (error) {
           if (isAdmissionAborted()) {
+            return;
+          }
+          if (error instanceof RemoteAuthenticationError) {
+            response.setHeader('www-authenticate', `Bearer resource_metadata="${config.metadataUrl}"`);
+            sendJson(response, 401, { error: 'Unauthorized' });
             return;
           }
           capture({ fingerprint: 'remote.account_lookup', route: '/mcp', status: 503, requestId });
@@ -354,8 +369,10 @@ export const createRemoteHandler = (options: RemoteServerOptions): RemoteHandler
           sendJson(response, 403, { error: 'Account not linked' });
           return;
         }
-        const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-        // The 1.29 SDK types conflict with exactOptionalPropertyTypes; omitting
+        const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, {
+          maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS,
+        });
+        // The SDK types conflict with exactOptionalPropertyTypes; omitting
         // sessionIdGenerator is its documented stateless runtime mode.
         const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
         try {
