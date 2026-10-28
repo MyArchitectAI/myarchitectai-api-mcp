@@ -6,8 +6,8 @@ Versioning and the changelog are managed with [Changesets](https://github.com/ch
 
 Every user-facing PR needs a **changeset**: a small note describing the change and its semver impact (`patch` / `minor` / `major`).
 
-- On **same-repo PRs**, the **Changeset** workflow (`.github/workflows/changeset-author.yml`) has Claude read the diff and write/update `.changeset/pr-<n>.md` for you — no need to remember, and it doesn't depend on commit-message conventions.
-- On **fork PRs** (a workflow can't push to a fork) or to write one by hand, run `npm run changeset` and commit the generated file.
+- Automatic changeset authoring is currently paused. The **Changeset** workflow is disabled in repository Actions settings; its configuration is retained for a future approved restart. See [Claude automation](CLAUDE-AUTOMATION.md).
+- On **all PRs**, run `npm run changeset` and commit the generated file when the change is user-facing.
 
 Internal-only PRs (tests, CI, refactors, repo docs) don't need a changeset.
 

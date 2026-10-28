@@ -1,5 +1,9 @@
 name: Changeset
 
+# Paused in repository Actions settings at Justin's request (28 October 2026).
+# Keep this workflow disabled until re-enabling is explicitly approved and the
+# credentials and available allowance are verified. See docs/CLAUDE-AUTOMATION.md.
+#
 # On each PR, Claude inspects the diff and writes/updates a per-PR changeset
 # (.changeset/pr-<number>.md) with the right semver bump — so contributors don't
 # have to remember, and we don't rely on commit-message conventions. The shipped
@@ -14,6 +18,7 @@ name: Changeset
 # Same-repo PRs only (a workflow can't push to a fork) and skips the Changesets
 # "Version Packages" branch. Like all claude-code-action workflows, edits here
 # take effect only once merged to main.
+# Dependabot runs use the same-named Dependabot secret, not the Actions secret.
 
 on:
   pull_request:
@@ -36,8 +41,22 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
+      - name: Require Claude OAuth secret
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            exit 0
+          fi
+          if [ "$GITHUB_ACTOR" = 'dependabot[bot]' ]; then
+            echo '::error::Missing Dependabot secret CLAUDE_CODE_OAUTH_TOKEN. Add it under Settings > Secrets and variables > Dependabot; Actions secrets are unavailable to Dependabot-triggered runs.'
+          else
+            echo '::error::Missing Actions secret CLAUDE_CODE_OAUTH_TOKEN. Add it under Settings > Secrets and variables > Actions.'
+          fi
+          exit 1
       - uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1
         with:
+          allowed_bots: 'dependabot[bot]'
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           show_full_output: true
           prompt: |
