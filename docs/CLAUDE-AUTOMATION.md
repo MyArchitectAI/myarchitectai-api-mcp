@@ -1,57 +1,37 @@
 # Claude automation
 
-PR reviews use Anthropic's managed Claude Code Review service through the Claude GitHub App. Managed reviews are optional while the organisation's review credits are resolved. Automatic changeset authoring is paused: the **Changeset** workflow is disabled in repository Actions settings, with its configuration retained for a later approved restart.
+PR reviews use the **Claude Review** GitHub Action with Claude Opus 5.5 and the repository's `CLAUDE_CODE_OAUTH_TOKEN`. This restores the review job used before the managed-service migration. Automatic changeset authoring remains paused: the **Changeset** workflow is disabled in repository Actions settings, with its configuration retained for a later approved restart.
 
-## Required checks and temporary pause
+## Required checks and workflow state
 
-The production ruleset requires `lint`, `build` and `test`. Do not add the legacy `review`, managed **Claude Code Review** or `changeset` checks as merge requirements while this pause is in effect. A managed-service credit failure is accepted for this release; it is not a successful review.
+The production ruleset requires `lint`, `build` and `test`. The token-based `review`, managed **Claude Code Review** and `changeset` checks are not required. Credential or allowance failures are not successful reviews; they remain nonblocking while the token is replaced.
 
-The custom **Claude Review** Action is disabled and its workflow file is removed. Keep the Claude GitHub App connected for managed reviews. The **Changeset** Action is disabled for the repository, including existing branches; retaining its YAML does not mean it is active. Inspect each workflow's `state` in GitHub Actions when verifying the pause.
+Enable the **Claude Review** Action after restoring its workflow on the default branch. Keep the **Changeset** Action disabled for the repository, including existing branches. Inspect each workflow's `state` in GitHub Actions to verify these settings. Contributors write changesets for user-facing changes with `npm run changeset`; see [Releasing](RELEASING.md).
 
-Contributors should write changesets for user-facing changes with `npm run changeset`. Package versioning and the tag-triggered release workflow remain available; see [Releasing](RELEASING.md).
+## Token-based reviews
 
-## Managed reviews
+The restored review workflow preserves its existing prompt, review plugin, model and permissions. It runs on same-repository, non-draft PRs when opened or marked ready for review. Pushing commits alone does not trigger it. Fork PRs cannot access the repository OAuth secret and are excluded.
 
-The Claude organisation owns the managed service configuration, repository access, review trigger and billing. Its existing configuration applies to `MyArchitectAI/myarchitectai-api-mcp`; this repository does not run a custom review workflow. Managed reviews do not use this repository's Actions or Dependabot OAuth secrets.
+The GitHub App provides GitHub access; `CLAUDE_CODE_OAUTH_TOKEN` authorises Claude inference. Installing the App does not replace the token or change its account's allowance. A successful app-token exchange followed by `usage_limit_reached` is a Claude allowance failure, not proof of a broken GitHub connection.
 
-Verify a real review using the **Claude Code Review** check on the PR, including its result and any findings. A successful GitHub Actions job called `review`, an app installation, or a reaction to a comment does not prove that managed review ran. If the configured automatic trigger does not cover an existing PR, a maintainer with write access can post a top-level `@claude review` comment to request one review. This does not change the repository's review trigger.
+The Action's workflow file must match its trusted default-branch copy. A green workflow-validation skip does not prove that Claude ran. After the token is updated, use a new eligible PR event and inspect the job log for actual review execution.
 
-See [managed review setup](https://code.claude.com/docs/en/code-review-setup) and [review troubleshooting](https://code.claude.com/docs/en/code-review-troubleshooting). Managed reviews run on Anthropic infrastructure and use the Claude organisation's billing or applicable promotional review entitlement. Keep the custom review Action removed to avoid duplicate review systems. The paused changeset author needs the credential below before a future restart; it does not supply managed-review credits.
-
-## Changeset credential setup before re-enabling
+## Credential setup
 
 1. An authorised owner follows [Claude's token setup instructions](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token) and runs `claude setup-token` while authenticated to the approved organisation Claude account. Do not reuse a developer's existing local or automation-harness credential.
 2. Store the token as `CLAUDE_CODE_OAUTH_TOKEN` in both [Actions secrets](https://github.com/MyArchitectAI/myarchitectai-api-mcp/settings/secrets/actions) and [Dependabot secrets](https://github.com/MyArchitectAI/myarchitectai-api-mcp/settings/secrets/dependabot). Keep both copies aligned when rotating it. Never put the value in source, PRs, logs or artifacts.
-3. Keep the existing explicit workflow permissions. GitHub supplies the appropriate same-named secret for each triggering actor; a Dependabot run cannot read the Actions copy.
+3. Verify the credential's account has available allowance. GitHub supplies the appropriate same-named secret for each triggering actor; a Dependabot run cannot read the Actions copy. Manually rerunning a Dependabot job retains its original privilege context.
 
-[GitHub's Dependabot guidance](https://docs.github.com/en/code-security/reference/supply-chain-security/troubleshoot-dependabot/dependabot-on-actions) documents the separate secret stores and explicit token permissions. Manually rerunning a Dependabot run retains its original privilege context.
+See [GitHub Actions authentication](https://code.claude.com/docs/en/github-actions) and [GitHub's Dependabot guidance](https://docs.github.com/en/code-security/reference/supply-chain-security/troubleshoot-dependabot/dependabot-on-actions).
 
-## Changeset trust boundaries
+## Managed service is separate
 
-- The changeset job requires a same-repository PR and skips `changeset-release/main`.
-- The Claude action explicitly allows `dependabot[bot]`. Other bots require a separately reviewed allowlist change.
-- Events, checkout behavior and permissions remain unchanged. The workflow uses `pull_request`, never `pull_request_target` to expose credentials to PR code.
-- The changeset prompt requests only `.changeset/pr-<number>.md`; the commit step stages `.changeset/` and pushes with `GITHUB_TOKEN`, which prevents its commit from recursively triggering workflows.
-- The action requires its workflow file to match the trusted default-branch copy. A workflow-changing PR may therefore show a green check while Claude execution was skipped.
+The managed Code Review service uses the Claude organisation's review billing or promotional entitlement, not the repository token. Justin chose to return to the token-based Action after confirming the managed review offer does not apply.
 
-## Diagnose the actual failure
+To stop duplicate managed-review requests, the Claude organisation owner can turn off Code review for this repository in [Admin settings > Claude Code](https://claude.ai/admin-settings/claude-code). Keep the GitHub App installed: the restored Action also uses it for GitHub access. This repository change does not alter the organisation's managed-service settings. See [turn off managed reviews for a repository](https://code.claude.com/docs/en/code-review-setup#turn-off-code-review-or-remove-a-repository).
 
-| Evidence | Meaning and next action |
-| --- | --- |
-| `Missing Dependabot secret CLAUDE_CODE_OAUTH_TOKEN` | Configure the Dependabot copy; an Actions secret alone cannot fix this run. |
-| `Missing Actions secret CLAUDE_CODE_OAUTH_TOKEN` | Configure the Actions copy for ordinary actor runs. |
-| Bot actor rejected | Confirm the trusted workflow explicitly allows `dependabot[bot]`. |
-| GitHub app token obtained, followed by HTTP 429 with `usage_limit_reached` | GitHub access succeeded; the changeset account's Claude allowance is exhausted. Check its reset or the approved account's available allowance; this does not establish token expiry or a managed-review failure. |
-| Explicit authentication failure, such as an expired/revoked credential or HTTP 401 | Have the authorised owner verify and, if necessary, replace the credential in both stores. |
-| Changeset workflow-validation skip | No changeset inference occurred. A green check alone is insufficient evidence. |
-| No **Claude Code Review** check | Managed review has not been observed for that PR. Check its trigger or request a review; use the managed-service troubleshooting guide if no check appears. |
+## Changeset restart
 
-## Verify before and after an approved restart
+The paused changeset workflow retains its same-repository guard, explicit Dependabot allowance, credential preflight, permissions, prompt and model. It uses `pull_request`, never `pull_request_target` to expose credentials to PR code. Its commit step pushes with `GITHUB_TOKEN` to avoid recursive workflow runs.
 
-1. Leave the Changeset workflow disabled until Justin approves re-enabling it. Confirm the default-branch workflow contains the Dependabot allowance and secret preflight, both secret stores are configured, and the credential's account has available allowance. Approval to change workflows does not authorise a production merge or credential rotation.
-2. After that approval, enable the Changeset workflow in repository Actions settings. Resolve the managed-review entitlement separately and confirm a real managed review completes before proposing to require that review; keep the retired review Action disabled.
-3. Inspect new genuine Dependabot-triggered and ordinary human PR events using that trusted workflow in [Actions](https://github.com/MyArchitectAI/myarchitectai-api-mcp/actions). A manual rerun of an old workflow does not test the new configuration.
-4. Confirm the secret preflight passes, the bot is accepted and Claude actually executes with the intended model. Check for a result without an error; exclude quota failures and validation skips.
-5. Confirm changeset authoring makes the appropriate change or no-change decision. A CI-only change may legitimately produce no changeset. If a changeset is committed, confirm no recursive run is created.
-
-Re-enabling either service does not make its check required. Any change to required checks needs a separate explicit decision.
+Leave the Changeset workflow disabled until Justin approves re-enabling it. Before restarting, verify both secret stores and available allowance. After approval, enable it in repository Actions settings and inspect new genuine Dependabot and ordinary human PR runs. Confirm Claude executes and makes the appropriate changeset or no-change decision; exclude validation skips and quota failures from success claims. Re-enabling a workflow does not make its check required.
