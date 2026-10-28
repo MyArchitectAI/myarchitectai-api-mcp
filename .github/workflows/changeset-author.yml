@@ -1,5 +1,9 @@
 name: Changeset
 
+# Paused in repository Actions settings at Justin's request (28 October 2026).
+# Keep this workflow disabled until re-enabling is explicitly approved and the
+# credentials and available allowance are verified. See docs/CLAUDE-AUTOMATION.md.
+#
 # On each PR, Claude inspects the diff and writes/updates a per-PR changeset
 # (.changeset/pr-<number>.md) with the right semver bump — so contributors don't
 # have to remember, and we don't rely on commit-message conventions. The shipped
