@@ -15,7 +15,7 @@ Internal-only PRs (tests, CI, refactors, repo docs) don't need a changeset.
 
 From an up-to-date `main`:
 
-Use Node 24 and npm 10.9 or newer. Changesets 3 requires a supported modern Node/npm toolchain and exits with status 1 when `changeset version` has no pending changesets. If nothing is pending, create the appropriate changeset before starting the version step.
+Use the latest Node 24 LTS patch release and its bundled npm (`nvm install && nvm use` with the repository's `.nvmrc`). Changesets 3 requires a supported modern Node/npm toolchain and exits with status 1 when `changeset version` has no pending changesets. If nothing is pending, create the appropriate changeset before starting the version step. Dropping support for older Node versions is a breaking change and requires a major changeset.
 
 ```bash
 git pull

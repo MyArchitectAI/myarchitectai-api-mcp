@@ -45,6 +45,8 @@ The stdio server exposes **17 tools**, covering all **12 API operations** in the
 
 ## Install
 
+Local stdio installations require the latest **Node.js 24 LTS** patch release. Node 18, 20 and 22 are no longer supported. Hosted connector users do not need to install Node.js.
+
 You need a MyArchitectAI API key — create one in the [portal](https://portal.myarchitectai.com). It
 is passed via the `MYARCHITECTAI_API_KEY` environment variable and sent as the `x-api-key` header.
 Requests also include `x-myarchitectai-source: mcp` for reported usage attribution; this marker grants no permissions.
@@ -146,7 +148,7 @@ The repository also prepares an OAuth-protected stateless Streamable HTTP connec
 Contributions are welcome — please open an issue or PR. The published npm package is built from this
 repository.
 
-Use Node 24 and npm 10.9 or newer for development and release tooling. The published server continues to support Node 18.14.1 or newer; CI installs development dependencies on Node 24, then builds and tests the runtime on Node 18, 20, 22 and 24.
+Use the latest Node 24 LTS patch release and its bundled npm for development and release tooling. The package, container, CI and hosted deployment use Node 24, the newest LTS runtime currently [supported by Vercel](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions). The `.nvmrc` file selects this major version; run `nvm install` and `nvm use` after cloning if you use nvm. CI builds and tests on Node 24.
 
 ```bash
 git clone https://github.com/MyArchitectAI/myarchitectai-api-mcp.git
