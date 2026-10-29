@@ -1,5 +1,11 @@
 # @myarchitectai/mcp
 
+## 1.1.1
+
+### Patch Changes
+
+- 38ffd27: The package now requires Node.js 24 or newer; Node 18, 20 and 22 are no longer supported. The Docker image now runs on Node 24 LTS.
+
 ## 1.1.0
 
 ### Minor Changes

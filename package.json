@@ -1,6 +1,6 @@
 {
   "name": "@myarchitectai/mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Model Context Protocol (MCP) server for the MyArchitectAI API — rendering, editing, textures, atmosphere, animation, prompts, 4K/8K upscaling and balance.",
   "type": "module",
   "license": "MIT",
