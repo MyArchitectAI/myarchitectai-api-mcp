@@ -148,7 +148,7 @@ The repository also prepares an OAuth-protected stateless Streamable HTTP connec
 Contributions are welcome — please open an issue or PR. The published npm package is built from this
 repository.
 
-Use the latest Node 24 LTS patch release and its bundled npm for development and release tooling. The `.nvmrc` file selects this major version for local development and workflow setup; run `nvm install` and `nvm use` after cloning if you use nvm. The container and hosted deployment also use Node 24, which is [supported by Vercel](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions). The npm package supports Node 24 or newer; CI builds and tests on Node 24 and 26.
+Use the latest Node 24 LTS patch release and its bundled npm for development and release tooling. The `.nvmrc` file selects this major version for local development and workflow setup; run `nvm install` and `nvm use` after cloning if you use nvm. The container uses Node 24. Vercel currently selects Node 24 for the package's `>=24` engine range, but can select a newer major when it becomes [available on Vercel](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions); this range does not pin the managed runtime. The npm package supports Node 24 or newer; CI builds and tests on Node 24 and 26.
 
 ```bash
 git clone https://github.com/MyArchitectAI/myarchitectai-api-mcp.git

@@ -73,7 +73,7 @@ The supported local setup uses the npm package with an externally installed Node
   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
   - Linux: `~/.config/Claude/claude_desktop_config.json`
   - UI: Settings → Developer → Edit Config.
-- **`.mcpb` bundle (Desktop Extensions):** one-click install (Settings → Extensions). Contains a `manifest.json` + bundled `node_modules`; secrets marked `"sensitive": true` are stored in the OS keychain. Preferred over manual JSON for end users.
+- **Proposed `.mcpb` bundle (Desktop Extensions):** one-click install (Settings → Extensions). Contains a `manifest.json` + bundled `node_modules`; secrets marked `"sensitive": true` are stored in the OS keychain. This repository does not currently ship this bundle; use the npm configuration above.
 
 ### claude.ai (web)
 
