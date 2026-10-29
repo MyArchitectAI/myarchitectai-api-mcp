@@ -85,9 +85,13 @@ jobs:
 
               <one or two sentence summary, written for users of the package>
 
-              Bump: a breaking change is "major"; a new feature, tool, or option
-              is "minor"; a bug fix is "patch". If the file already exists and is
-              still accurate, leave it unchanged.
+              Bump: a Node.js runtime or toolchain-only upgrade with no MCP tool
+              or public API changes is "patch" under this repository's release
+              policy, including changes to the minimum Node version. State the
+              new Node requirement in its summary. Otherwise, a breaking change
+              is "major"; a new feature, tool, or option is "minor"; a bug fix is
+              "patch". If the file already exists and is still accurate, leave
+              it unchanged.
             - If it is NOT user-facing: if that file exists, delete it (`rm`);
               otherwise do nothing.
           claude_args: |
