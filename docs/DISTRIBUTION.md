@@ -66,6 +66,8 @@ Rule of thumb: **stdio covers all local CLI/desktop hosts; the two browser hosts
 
 ### Claude Desktop
 
+The supported local setup uses the npm package with an externally installed Node 24 or newer. A `.mcpb` bundle is a proposed distribution path, not a shipped artifact; it requires verification that the host's bundled Node meets the package requirement before release.
+
 - **Config file:**
   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`

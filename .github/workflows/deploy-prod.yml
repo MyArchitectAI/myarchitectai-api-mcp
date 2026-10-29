@@ -14,6 +14,7 @@ on:
       - 'vercel.json'
       - '.vercelignore'
       - '.npmrc'
+      - '.nvmrc'
   workflow_dispatch:
 
 concurrency:
@@ -55,7 +56,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24.x
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
@@ -101,7 +102,7 @@ jobs:
             fi
             # Keep these production inputs aligned with on.push.paths above.
             if ! git diff --quiet "$GITHUB_SHA" "$current_main" -- \
-              src/ server.ts package.json package-lock.json tsconfig.json vercel.json .vercelignore .npmrc; then
+              src/ server.ts package.json package-lock.json tsconfig.json vercel.json .vercelignore .npmrc .nvmrc; then
               echo '::error::Newer production inputs exist on main; the newer runtime run must deploy instead.'
               exit 1
             fi
