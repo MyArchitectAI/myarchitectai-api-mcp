@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- 97464d6: Hosted servers now require scoped Portal OAuth grants and return permission challenges for unapproved tools. Deploy the companion Portal authorization service and reconnect hosted clients when upgrading.
+- 97464d6: The separately deployed hosted connector now requires scoped Portal OAuth grants and returns permission challenges for unapproved tools. Deploy the companion Portal authorization service and reconnect hosted clients when upgrading. The npm stdio API-key flow is unchanged.
 
 ### Patch Changes
 
