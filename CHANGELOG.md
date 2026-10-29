@@ -1,5 +1,16 @@
 # @myarchitectai/mcp
 
+## 1.1.0
+
+### Minor Changes
+
+- 97464d6: Hosted servers now require scoped Portal OAuth grants and return permission challenges for unapproved tools. Deploy the companion Portal authorization service and reconnect hosted clients when upgrading.
+
+### Patch Changes
+
+- a2d12f6: Update runtime dependencies and bound tool-input validation. Preserve large inline-image saves and previews with a bounded 64 MiB stdio request buffer when upgrading the MCP SDK.
+- b7fc82f: API requests now include an `x-myarchitectai-source: mcp` header so usage from the MCP server can be reported separately. The header is only used for analytics and does not affect authentication or permissions.
+
 ## 1.0.0
 
 ### Major Changes
