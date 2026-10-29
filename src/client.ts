@@ -2,7 +2,7 @@
  * HTTP client for the MyArchitectAI REST API.
  *
  * Responsibilities:
- *  - attach the `x-api-key` header and JSON content negotiation
+ *  - attach the API key, reported MCP source marker and JSON content negotiation
  *  - enforce a per-request timeout via AbortController
  *  - retry documented uncharged failures (429/502), and transient balance
  *    lookup failures, with backoff inside one total timeout budget

@@ -47,6 +47,7 @@ The stdio server exposes **17 tools**, covering all **12 API operations** in the
 
 You need a MyArchitectAI API key — create one in the [portal](https://portal.myarchitectai.com). It
 is passed via the `MYARCHITECTAI_API_KEY` environment variable and sent as the `x-api-key` header.
+Requests also include `x-myarchitectai-source: mcp` for reported usage attribution; this marker grants no permissions.
 
 ### Claude Code
 
@@ -136,7 +137,7 @@ CI checks the live contract on PRs, main pushes and manual dispatch. A spec chan
 
 ## Authentication
 
-The stdio server authenticates to the MyArchitectAI API with an **API key** (`x-api-key`) from your environment. Credential handling is isolated in `src/config.ts` and the client's header injection. The executable is `myarchitectai-mcp`; the generic `mcp` alias has been removed. Existing `npx -y @myarchitectai/mcp` configurations still select the package's single executable.
+The stdio server authenticates to the MyArchitectAI API with an **API key** (`x-api-key`) from your environment. It also sends `x-myarchitectai-source: mcp` as a client-reported analytics marker, separate from authentication. Credential handling is isolated in `src/config.ts` and the client's header injection. The executable is `myarchitectai-mcp`; the generic `mcp` alias has been removed. Existing `npx -y @myarchitectai/mcp` configurations still select the package's single executable.
 
 The repository also prepares an OAuth-protected stateless Streamable HTTP connector for the company's Vercel account. It verifies an audience-bound OAuth token and delegates the 12 existing API operations to the API Portal backend with a separate signed internal request. The hosted runtime uses API Portal accounts and API balance. Portal retains customer keys, ownership checks and billing. Hosted MCP has no history store, Redis, or local media utilities; stdio retains its existing tools and local history. No public connector has been deployed, and real OAuth consent and Claude acceptance remain pending. See the [integration contract](docs/REMOTE-CONNECTOR.md), [hosted runtime configuration](docs/HOSTED-RUNTIME.md), and [production deployment setup](docs/DEPLOYMENT.md). The deployment workflow is production-only; there are no preview deployments. Hosted paid calls through Portal are never automatically retried, because an intermediary error cannot prove that generation was uncharged.
 
