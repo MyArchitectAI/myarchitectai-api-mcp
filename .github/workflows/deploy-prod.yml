@@ -5,6 +5,15 @@ name: deploy-prod
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'server.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'vercel.json'
+      - '.vercelignore'
+      - '.npmrc'
   workflow_dispatch:
 
 concurrency:
@@ -41,6 +50,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -71,13 +81,31 @@ jobs:
       - name: Install pinned Vercel CLI
         run: npm install --global vercel@61.0.0
 
-      - name: Require tested source to remain current main
+      - name: Require tested production inputs to remain current
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin main
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || [ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]; then
-            echo '::error::Current origin/main differs from this tested revision; a newer run must deploy instead.'
+          git fetch --no-tags origin main
+          current_main="$(git rev-parse FETCH_HEAD)"
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo '::error::The checkout differs from the tested revision.'
             exit 1
+          fi
+          if [ "$current_main" != "$GITHUB_SHA" ]; then
+            if [ "$GITHUB_EVENT_NAME" != push ]; then
+              echo '::error::Manual production deployment requires current main; dispatch it again against main.'
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" "$current_main"; then
+              echo '::error::The tested revision is no longer an ancestor of current main.'
+              exit 1
+            fi
+            # Keep these production inputs aligned with on.push.paths above.
+            if ! git diff --quiet "$GITHUB_SHA" "$current_main" -- \
+              src/ server.ts package.json package-lock.json tsconfig.json vercel.json .vercelignore .npmrc; then
+              echo '::error::Newer production inputs exist on main; the newer runtime run must deploy instead.'
+              exit 1
+            fi
+            echo 'Main advanced only outside production inputs; deploying the exact tested runtime revision.'
           fi
 
       - name: Deploy source to company Vercel production
