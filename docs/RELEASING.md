@@ -15,7 +15,7 @@ Internal-only PRs (tests, CI, refactors, repo docs) don't need a changeset.
 
 From an up-to-date `main`:
 
-Use the latest Node 24 LTS patch release and its bundled npm (`nvm install && nvm use` with the repository's `.nvmrc`). Changesets 3 requires a supported modern Node/npm toolchain and exits with status 1 when `changeset version` has no pending changesets. If nothing is pending, create the appropriate changeset before starting the version step. Dropping support for older Node versions is a breaking change and requires a major changeset.
+Use the latest Node 24 LTS patch release and its bundled npm (`nvm install && nvm use` with the repository's `.nvmrc`). Changesets 3 requires a supported modern Node/npm toolchain and exits with status 1 when `changeset version` has no pending changesets. If nothing is pending, create the appropriate changeset before starting the version step. Node.js runtime and toolchain upgrades with no MCP tool or public API changes use a patch changeset under this repository's release policy. State the new Node requirement in the release note.
 
 ```bash
 git pull
