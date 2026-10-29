@@ -6,8 +6,8 @@ Versioning and the changelog are managed with [Changesets](https://github.com/ch
 
 Every user-facing PR needs a **changeset**: a small note describing the change and its semver impact (`patch` / `minor` / `major`).
 
-- Automatic changeset authoring is currently paused. The **Changeset** workflow is disabled in repository Actions settings; its configuration is retained for a future approved restart. See [Claude automation](CLAUDE-AUTOMATION.md).
-- On **all PRs**, run `npm run changeset` and commit the generated file when the change is user-facing.
+- On **same-repo PRs**, the **Changeset** workflow reads the diff and creates or updates `.changeset/pr-<number>.md` for user-facing changes. See [Claude automation](CLAUDE-AUTOMATION.md).
+- Same-repository maintainers should edit `.changeset/pr-<number>.md` directly when a manual correction is needed; do not add a second CLI-generated note for the same change. On **fork PRs**, run `npm run changeset` and commit the generated file.
 
 Internal-only PRs (tests, CI, refactors, repo docs) don't need a changeset.
 
@@ -15,7 +15,7 @@ Internal-only PRs (tests, CI, refactors, repo docs) don't need a changeset.
 
 From an up-to-date `main`:
 
-Use Node 24 and npm 10.9 or newer. Changesets 3 requires a supported modern Node/npm toolchain and exits with status 1 when `changeset version` has no pending changesets. If nothing is pending, create the appropriate changeset before starting the version step.
+Use the latest Node 24 LTS patch release and its bundled npm (`nvm install && nvm use` with the repository's `.nvmrc`). Changesets 3 requires a supported modern Node/npm toolchain and exits with status 1 when `changeset version` has no pending changesets. If nothing is pending, create the appropriate changeset before starting the version step. Node.js runtime and toolchain upgrades with no MCP tool or public API changes use a patch changeset under this repository's release policy. State the new Node requirement in the release note.
 
 ```bash
 git pull

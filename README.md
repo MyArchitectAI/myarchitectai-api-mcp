@@ -45,8 +45,11 @@ The stdio server exposes **17 tools**, covering all **12 API operations** in the
 
 ## Install
 
+Local stdio installations require **Node.js 24 or newer**. Use a current patch release of a supported LTS version; CI covers Node 24 and 26. Node 18, 20 and 22 are no longer supported. Hosted connector users do not need to install Node.js.
+
 You need a MyArchitectAI API key — create one in the [portal](https://portal.myarchitectai.com). It
 is passed via the `MYARCHITECTAI_API_KEY` environment variable and sent as the `x-api-key` header.
+Requests also include `x-myarchitectai-source: mcp` for reported usage attribution; this marker grants no permissions.
 
 ### Claude Code
 
@@ -136,7 +139,7 @@ CI checks the live contract on PRs, main pushes and manual dispatch. A spec chan
 
 ## Authentication
 
-The stdio server authenticates to the MyArchitectAI API with an **API key** (`x-api-key`) from your environment. Credential handling is isolated in `src/config.ts` and the client's header injection. The executable is `myarchitectai-mcp`; the generic `mcp` alias has been removed. Existing `npx -y @myarchitectai/mcp` configurations still select the package's single executable.
+The stdio server authenticates to the MyArchitectAI API with an **API key** (`x-api-key`) from your environment. It also sends `x-myarchitectai-source: mcp` as a client-reported analytics marker, separate from authentication. Credential handling is isolated in `src/config.ts` and the client's header injection. The executable is `myarchitectai-mcp`; the generic `mcp` alias has been removed. Existing `npx -y @myarchitectai/mcp` configurations still select the package's single executable.
 
 The repository also prepares an OAuth-protected stateless Streamable HTTP connector for the company's Vercel account. It verifies an audience-bound OAuth token and delegates the 12 existing API operations to the API Portal backend with a separate signed internal request. The hosted runtime uses API Portal accounts and API balance. Portal retains customer keys, ownership checks and billing. Hosted MCP has no history store, Redis, or local media utilities; stdio retains its existing tools and local history. No public connector has been deployed, and real OAuth consent and Claude acceptance remain pending. See the [integration contract](docs/REMOTE-CONNECTOR.md), [hosted runtime configuration](docs/HOSTED-RUNTIME.md), and [production deployment setup](docs/DEPLOYMENT.md). The deployment workflow is production-only; there are no preview deployments. Hosted paid calls through Portal are never automatically retried, because an intermediary error cannot prove that generation was uncharged.
 
@@ -145,7 +148,7 @@ The repository also prepares an OAuth-protected stateless Streamable HTTP connec
 Contributions are welcome — please open an issue or PR. The published npm package is built from this
 repository.
 
-Use Node 24 and npm 10.9 or newer for development and release tooling. The published server continues to support Node 18.14.1 or newer; CI installs development dependencies on Node 24, then builds and tests the runtime on Node 18, 20, 22 and 24.
+Use the latest Node 24 LTS patch release and its bundled npm for development and release tooling. The `.nvmrc` file selects this major version for local development and workflow setup; run `nvm install` and `nvm use` after cloning if you use nvm. The container uses Node 24. Vercel currently selects Node 24 for the package's `>=24` engine range, but can select a newer major when it becomes [available on Vercel](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions); this range does not pin the managed runtime. The npm package supports Node 24 or newer; CI builds and tests on Node 24 and 26.
 
 ```bash
 git clone https://github.com/MyArchitectAI/myarchitectai-api-mcp.git

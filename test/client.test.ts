@@ -69,6 +69,8 @@ describe('MyArchitectAIClient.generate', () => {
     assert.equal(captured?.url, 'https://api.test/v1/text-to-image');
     const headers = captured?.init?.headers as Record<string, string>;
     assert.equal(headers['x-api-key'], 'test-key');
+    assert.equal(headers['x-myarchitectai-source'], 'mcp');
+    assert.equal(headers['authorization'], undefined);
     assert.equal(headers['content-type'], 'application/json');
     assert.deepEqual(JSON.parse(String(captured?.init?.body)), { prompt: 'a glass house' });
   });
