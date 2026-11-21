@@ -1,5 +1,16 @@
 # @myarchitectai/mcp
 
+## 1.2.0
+
+### Minor Changes
+
+- 5cb2ac4: Add an optional `speed` input to the `animate` tool: `standard` (default) for the highest quality, or `fast` for a 768p video in a fraction of the time, at the same cost.
+
+### Patch Changes
+
+- 8b2d697: Update `hono` to 4.13.18, which includes upstream security fixes.
+- b6a3df0: Update `@hono/node-server` to 2.1.8.
+
 ## 1.1.1
 
 ### Patch Changes
