@@ -22,7 +22,7 @@ edit images, change textures and atmosphere, animate renders, generate prompts, 
 | `edit_by_prompt` | Apply an edit instruction | `image`, `prompt` | `referenceImage` |
 | `change_textures` | Retexture masked surfaces | `image`, `mask`, exactly one of `prompt` / `referenceImage` | — |
 | `set_atmosphere` | Change interior lighting or exterior atmosphere | `image`, `sceneType`; interior: `lighting`; exterior: at least one of `timeOfDay` / `season` / `weather` | Additional exterior controls |
-| `animate` | Animate a frame or transition between frames (video URL) | `startFrameUrl`, `prompt` | `endFrameUrl` |
+| `animate` | Animate a frame or transition between frames (video URL) | `startFrameUrl`, `prompt` | `endFrameUrl`, `speed` |
 | `upscale` | Upscale to 4K or 8K | `image` | `targetResolution`, `outputFormat` |
 | `upscale_4k` | Legacy 4K endpoint; prefer `upscale` | `image` | `outputFormat` |
 | `balance` | Read the current account balance without a charge | — | — |
@@ -39,7 +39,7 @@ edit images, change textures and atmosphere, animate renders, generate prompts, 
 
 Image inputs accept a public HTTPS URL reachable by MyArchitectAI or an inline `data:image/<mime>;base64,<payload>` URI. Output formats are endpoint-specific: upscale accepts `jpg`/`webp`/`png`, but PNG is unavailable at 8K and AVIF is unsupported. Text-to-image dimensions are 128–2048px. Requests have a 10 MB body limit; prefer URLs for large inputs.
 
-The API responds synchronously, streaming while it works. Animation typically takes 60–90 seconds; configure your MCP host's tool timeout to accommodate it. Image utilities do not preview or download videos; open the returned animation URL in a video-capable client.
+The API responds synchronously, streaming while it works. Animation typically takes 60–90 seconds, or 20–30 seconds with `speed: "fast"`; configure your MCP host's tool timeout to accommodate it. Image utilities do not preview or download videos; open the returned animation URL in a video-capable client.
 
 The stdio server exposes **17 tools**, covering all **12 API operations** in the [published API reference](https://portal.myarchitectai.com/docs). The hosted connector exposes those **12 API operations**. [API contract maintenance](docs/API-CONTRACT.md) describes the snapshot and automated drift checks.
 
