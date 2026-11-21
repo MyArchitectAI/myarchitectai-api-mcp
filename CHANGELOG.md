@@ -8,7 +8,8 @@
 
 ### Patch Changes
 
-- 8b2d697: Update `hono` to 4.13.18 and `@hono/node-server` to 2.1.8, which include upstream security fixes.
+- 8b2d697: Update `hono` to 4.13.18, which includes upstream security fixes.
+- b6a3df0: Update `@hono/node-server` to 2.1.8.
 
 ## 1.1.1
 
