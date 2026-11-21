@@ -22,7 +22,7 @@ edit images, change textures and atmosphere, animate renders, generate prompts, 
 | `edit_by_prompt` | Apply an edit instruction | `image`, `prompt` | `referenceImage` |
 | `change_textures` | Retexture masked surfaces | `image`, `mask`, exactly one of `prompt` / `referenceImage` | — |
 | `set_atmosphere` | Change interior lighting or exterior atmosphere | `image`, `sceneType`; interior: `lighting`; exterior: at least one of `timeOfDay` / `season` / `weather` | Additional exterior controls |
-| `animate` | Animate a frame or transition between frames (video URL) | `startFrameUrl`, `prompt` | `endFrameUrl` |
+| `animate` | Animate a frame or transition between frames (video URL) | `startFrameUrl`, `prompt` | `endFrameUrl`, `speed` |
 | `upscale` | Upscale to 4K or 8K | `image` | `targetResolution`, `outputFormat` |
 | `upscale_4k` | Legacy 4K endpoint; prefer `upscale` | `image` | `outputFormat` |
 | `balance` | Read the current account balance without a charge | — | — |

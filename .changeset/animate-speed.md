@@ -1,0 +1,5 @@
+---
+'@myarchitectai/mcp': minor
+---
+
+Add an optional `speed` input to `animate`: `standard` (default) for the highest quality, or `fast` for a 768p video in a fraction of the time, at the same cost.

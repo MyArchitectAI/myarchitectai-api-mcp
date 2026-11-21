@@ -137,6 +137,7 @@ export const animateShape = {
   startFrameUrl: renderExteriorShape.image,
   prompt: prompt.describe('Camera motion or transition to animate.'),
   endFrameUrl: renderExteriorShape.image.optional().describe('Optional end frame URL or image data URI for a transition.'),
+  speed: z.enum(['standard', 'fast']).optional().describe('standard (default) gives the highest quality; fast returns a 768p video in a fraction of the time. Same cost.'),
 };
 
 /** Shared structured-output schema returned by every generation tool. */

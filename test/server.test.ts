@@ -275,7 +275,7 @@ describe('current API tools', () => {
     { name: 'edit_by_prompt', path: '/edit-by-prompt', args: { image: 'https://x/source.png', prompt: 'replace the lamp', referenceImage: 'https://x/lamp.png' }, output: 'https://x/edited.png' },
     { name: 'change_textures', path: '/change-textures', args: { image: 'https://x/source.png', mask: 'https://x/mask.png', prompt: 'oak' }, output: ['https://x/texture.png'] },
     { name: 'set_atmosphere', path: '/set-atmosphere', args: { image: 'https://x/source.png', sceneType: 'exterior', season: 'winter', weather: 'snow' }, output: ['https://x/winter.png'] },
-    { name: 'animate', path: '/animate', args: { startFrameUrl: 'https://x/source.png', endFrameUrl: 'https://x/end.png', prompt: 'slow pan' }, output: 'https://x/animation.mp4' },
+    { name: 'animate', path: '/animate', args: { startFrameUrl: 'https://x/source.png', endFrameUrl: 'https://x/end.png', prompt: 'slow pan', speed: 'fast' }, output: 'https://x/animation.mp4' },
     { name: 'upscale', path: '/upscale', args: { image: 'https://x/source.png', targetResolution: '8k', outputFormat: 'webp' }, output: 'https://x/8k.webp' },
   ];
   for (const fixture of cases) {

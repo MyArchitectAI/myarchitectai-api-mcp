@@ -1254,6 +1254,15 @@
           "endFrameUrl": {
             "type": "string",
             "description": "Optional image to use as the end frame. When provided, the video interpolates from the start frame to this frame. Either a public HTTPS URL reachable by MyArchitectAI, or an inline `data:image/<mime>;base64,<payload>` URI for local files."
+          },
+          "speed": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "fast"
+            ],
+            "default": "standard",
+            "description": "`standard` (default) gives the highest quality. `fast` returns a 768p video in a fraction of the time. Both speeds cost the same."
           }
         }
       },
