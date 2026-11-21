@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { z } from 'zod';
 import {
+  animateShape,
   changeTexturesSchema,
   setAtmosphereSchema,
   upscaleSchema,
@@ -57,5 +59,12 @@ describe('current input contract', () => {
   it('accepts PNG at 4K and upstream defaults without injecting optional fields', () => {
     assert.equal(upscaleSchema.safeParse({ image: PNG_DATA_URI, targetResolution: '4k', outputFormat: 'png' }).success, true);
     assert.deepEqual(upscaleSchema.parse({ image: PNG_DATA_URI }), { image: PNG_DATA_URI });
+  });
+  it('accepts both animate speeds, rejects others and sends no speed by default', () => {
+    const animateSchema = z.object(animateShape);
+    const base = { startFrameUrl: PNG_DATA_URI, prompt: 'slow pan' };
+    for (const speed of ['standard', 'fast']) assert.equal(animateSchema.safeParse({ ...base, speed }).success, true);
+    assert.equal(animateSchema.safeParse({ ...base, speed: 'turbo' }).success, false);
+    assert.deepEqual(animateSchema.parse(base), base);
   });
 });

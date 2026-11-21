@@ -114,8 +114,8 @@ function registerGenerationTools(server: McpServer, deps: ToolDeps): void {
       description: 'Relight interiors or change exterior atmosphere. Interior requires lighting only. Exterior requires at least one of timeOfDay, season or weather and rejects lighting.' },
     { name: 'animate', title: 'Animate Image', inputSchema: z.object(animateShape),
       description: deps.mode === 'remote'
-        ? 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.'
-        : 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL; image preview/save utilities do not support videos. Usually takes 60–90 seconds; set the MCP host tool timeout accordingly.' },
+        ? 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL. Standard speed usually takes 60–90 seconds and fast about 20–30 seconds; set the MCP host tool timeout accordingly.'
+        : 'Animate a start frame with a motion prompt and optional end frame. Returns a VIDEO URL; image preview/save utilities do not support videos. Standard speed usually takes 60–90 seconds and fast about 20–30 seconds; set the MCP host tool timeout accordingly.' },
     { name: 'upscale', title: 'Upscale to 4K or 8K', inputSchema: upscaleSchema,
       description: 'Upscale to 3840 (4k) or 7680 (8k) pixels on the longer side. Defaults to 4k and jpg. At 8k, only jpg or webp output is available.' },
   ];
